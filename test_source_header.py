@@ -273,7 +273,7 @@ class TestLintFormat(TempDirCase):
                 self.assertIn("D001", codes(self.lint(fields_with(updated_date=bad))))
         for good in ("2026-10-31", "2026-10-31 09:30", "2024-02-29"):
             with self.subTest(good=good):
-                self.assertEqual(self.lint(fields_with(updated_date=good)), [])
+                self.assertEqual(self.lint(fields_with(created_date=good, updated_date=good)), [])
 
     def test_list_field_types(self) -> None:
         """TASK-1#2 authors·reviewers·labels는 리스트(F003), 나머지는 스칼라(F004)"""
@@ -312,6 +312,61 @@ class TestLintFormat(TempDirCase):
         res = run_cli(["lint", "bad.py"], self.tmp)
         self.assertEqual(res.returncode, 1)
         self.assertIn("bad.py:6: error:", res.stdout)
+
+
+PUBLISHED = fields_with(
+    status="published",
+    reviewers=["human"],
+    reviewed_date="2026-10-10",
+    published_date="2026-10-11",
+    updated_date="2026-10-31",
+)
+
+
+class TestLintLifecycle(TempDirCase):
+    """TASK-1#3 상태 조건·날짜 순서 규칙"""
+
+    def test_reviewers_required_from_review(self) -> None:
+        """TASK-1#3 TASK-1#B1 review·published·deprecated·archived면 reviewers가 있어야 한다"""
+        self.assertEqual(codes(self.lint(fields_with(status="review", reviewers=["h"]))), [])
+        self.assertEqual(codes(self.lint(fields_with(status="review"))), ["B1"])
+        self.assertEqual(codes(self.lint(fields_with(status="review", reviewers=[]))), ["B1"])
+        self.assertEqual(codes(self.lint(fields_with(reviewers=None))), [])  # draft는 무관
+        no_reviewers = {k: v for k, v in PUBLISHED.items() if k != "reviewers"}
+        self.assertIn("B1", codes(self.lint(no_reviewers)))
+
+    def test_published_needs_review_and_publish_dates(self) -> None:
+        """TASK-1#3 TASK-1#B2 published면 reviewed_date와 published_date가 있어야 한다"""
+        self.assertEqual(self.lint(PUBLISHED), [])
+        for key in ("reviewed_date", "published_date"):
+            with self.subTest(key=key):
+                found = self.lint(dict(PUBLISHED, **{key: ""}))
+                self.assertEqual(codes(found), ["B2"])
+                self.assertIn(key, found[0].message)
+
+    def test_deprecated_needs_date_and_successor(self) -> None:
+        """TASK-1#3 TASK-1#B3 deprecated·archived면 deprecated_date와 superseded_by가 있어야 한다"""
+        for status in ("deprecated", "archived"):
+            ok = fields_with(status=status, reviewers=["h"], deprecated_date="2026-10-31",
+                             superseded_by="new.py")
+            with self.subTest(status=status):
+                self.assertEqual(self.lint(ok), [])
+                self.assertEqual(codes(self.lint(dict(ok, superseded_by=""))), ["B3"])
+                self.assertEqual(codes(self.lint(dict(ok, deprecated_date=""))), ["B3"])
+
+    def test_date_order(self) -> None:
+        """TASK-1#3 TASK-1#B4 created ≤ reviewed ≤ published ≤ deprecated, created ≤ updated"""
+        self.assertEqual(codes(self.lint(fields_with(updated_date="2026-09-30"))), ["B4"])
+        self.assertEqual(codes(self.lint(dict(PUBLISHED, reviewed_date="2026-10-12"))), ["B4"])
+        self.assertEqual(codes(self.lint(dict(PUBLISHED, reviewed_date="2026-09-01"))), ["B4"])
+        dep = dict(PUBLISHED, status="deprecated", superseded_by="x.py",
+                   deprecated_date="2026-10-05")
+        self.assertEqual(codes(self.lint(dep)), ["B4"])
+        # 같은 날의 시각 차이는 순서 위반으로 보지 않는다(날짜 단위 비교)
+        same_day = fields_with(created_date="2026-10-31 10:00", updated_date="2026-10-31")
+        self.assertEqual(self.lint(same_day), [])
+        # 형식이 틀린 날짜는 D001만 보고하고 순서 비교에서는 뺀다
+        self.assertEqual(codes(self.lint(fields_with(updated_date="2026-13-01"))), ["D001"])
 
 
 # == Coverage ==

@@ -359,7 +359,51 @@ def rule_dates(fields, ctx):
     return out
 
 
-RULES = [rule_required, rule_unknown, rule_types, rule_status, rule_dates]
+def _blank(fields, key) -> bool:
+    return fields.get(key) in (None, "", [])
+
+
+def rule_lifecycle(fields, ctx):
+    """B1~B3 상태마다 있어야 하는 필드. 상태를 올렸으면 그 근거(검토자·날짜·후속)를 남기게 한다."""
+    status = fields.get("status")
+    out = []
+    if status in ("review", "published", "deprecated", "archived") and _blank(fields, "reviewers"):
+        out.append(_finding(ctx, "status", "error", "B1",
+                            f"status '{status}' requires reviewers"))
+    if status == "published":
+        for key in ("reviewed_date", "published_date"):
+            if _blank(fields, key):
+                out.append(_finding(ctx, "status", "error", "B2",
+                                    f"status 'published' requires {key}"))
+    if status in ("deprecated", "archived"):
+        for key in ("deprecated_date", "superseded_by"):
+            if _blank(fields, key):
+                out.append(_finding(ctx, "status", "error", "B3",
+                                    f"status '{status}' requires {key}"))
+    return out
+
+
+def rule_date_order(fields, ctx):
+    """B4 수명 주기 날짜 순서. 날짜 단위로 비교하고(같은 날 시각 차이는 허용), 빠진·틀린 날짜는 건너뛴다."""
+    days = {}
+    for key in DATE_FIELDS:
+        parsed = parse_date(fields.get(key))
+        if parsed is not None:
+            days[key] = parsed.date()
+    chain = [k for k in ("created_date", "reviewed_date", "published_date", "deprecated_date")
+             if k in days]
+    pairs = list(zip(chain, chain[1:]))
+    if "created_date" in days and "updated_date" in days:
+        pairs.append(("created_date", "updated_date"))
+    return [
+        _finding(ctx, later, "error", "B4", f"{later} ({days[later]}) is before {earlier} ({days[earlier]})")
+        for earlier, later in pairs
+        if days[later] < days[earlier]
+    ]
+
+
+RULES = [rule_required, rule_unknown, rule_types, rule_status, rule_dates, rule_lifecycle,
+         rule_date_order]
 
 
 def lint_text(text: str, path: str, ctx: LintContext) -> list[Finding]:
