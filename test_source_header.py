@@ -544,6 +544,82 @@ class TestLintTargets(GitCase):
         self.assertTrue(res.stdout.startswith("a.py:"), res.stdout)
 
 
+TODAY = sh.today()
+
+
+class TestInit(GitCase):
+    """TASK-1#6 init"""
+
+    def make_history(self) -> None:
+        """alice가 1월에 추가하고, 2월에 이름을 바꾸고, bob이 3월에 고친 파일."""
+        self.write("LICENSE", LICENSE_TEXTS["MIT"])
+        self.write("tool_old.py", "#!/usr/bin/env python3\nprint(1)\n")
+        self.git("add", ".")
+        self.commit("add", "2026-01-05", "alice <a@example.com>")
+        self.git("mv", "tool_old.py", "tool.py")
+        self.commit("rename", "2026-02-01", "alice <a@example.com>")
+        self.write("tool.py", "#!/usr/bin/env python3\nprint(2)\n")
+        self.git("add", ".")
+        self.commit("edit", "2026-03-01", "bob <b@example.com>")
+
+    def test_git_derived_facts(self) -> None:
+        """TASK-1#6 TASK-1#B7 created_date는 처음 추가된 커밋 날짜, authors는 git 작성자, license는 LICENSE"""
+        self.make_history()
+        self.assertEqual(sh.git_created_date(self.tmp, "tool.py"), "2026-01-05")
+        self.assertEqual(sh.git_authors(self.tmp, "tool.py"), ["alice", "bob"])
+        self.assertEqual(sh.repo_license(self.tmp), "MIT")
+        self.assertIsNone(sh.git_created_date(self.tmp, "nope.py"))
+
+    def test_init_inserts_derived_header(self) -> None:
+        """TASK-1#6 TASK-1#B7 init은 git 유도 헤더 + status: draft + 빈 description을 shebang 뒤에 넣는다"""
+        self.make_history()
+        res = self.cli("init", "tool.py")
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        text = (self.tmp / "tool.py").read_text()
+        self.assertTrue(text.startswith("#!/usr/bin/env python3\n# ---\n"))
+        self.assertTrue(text.endswith("# ---\nprint(2)\n"))
+        header = sh.extract_header(text, "tool.py")
+        self.assertEqual(header.fields, {
+            "title": "tool",
+            "description": "",
+            "authors": ["alice", "bob"],
+            "license": "MIT",
+            "status": "draft",
+            "created_date": "2026-01-05",
+            "updated_date": "2026-03-01",
+        })
+        lint = self.cli("lint", "tool.py")
+        self.assertEqual(lint.returncode, 0)  # 빈 description 경고만 남는다
+        self.assertIn("(F005)", lint.stdout)
+
+    def test_init_is_idempotent(self) -> None:
+        """TASK-1#6 여러 번 실행해도 결과가 같다"""
+        self.make_history()
+        self.write("docs/guide.md", "# Guide\n")
+        self.cli("init", ".")
+        first = {p: (self.tmp / p).read_text() for p in ("tool.py", "docs/guide.md")}
+        res = self.cli("init", ".")
+        self.assertEqual(res.returncode, 0)
+        second = {p: (self.tmp / p).read_text() for p in ("tool.py", "docs/guide.md")}
+        self.assertEqual(first, second)
+        self.assertTrue(first["docs/guide.md"].startswith("---\ntitle: guide\n"))
+
+    def test_init_untracked_file_and_license_fallback(self) -> None:
+        """TASK-1#6 TASK-1#B7 추적 안 된 파일은 오늘 날짜·git 사용자, LICENSE가 없으면 --license 또는 NOASSERTION"""
+        self.write("new.ts", "export const x = 1;\n")
+        self.cli("init", "new.ts")
+        fields = sh.extract_header((self.tmp / "new.ts").read_text(), "new.ts").fields
+        self.assertEqual(fields["created_date"], TODAY)
+        self.assertEqual(fields["updated_date"], TODAY)
+        self.assertEqual(fields["authors"], ["tester"])
+        self.assertEqual(fields["license"], "NOASSERTION")
+        self.write("other.sql", "select 1;\n")
+        self.cli("init", "--license", "AGPL-3.0-only", "other.sql")
+        text = (self.tmp / "other.sql").read_text()
+        self.assertTrue(text.startswith("-- ---\n"))
+        self.assertEqual(sh.extract_header(text, "other.sql").fields["license"], "AGPL-3.0-only")
+
+
 # == Coverage ==
 
 

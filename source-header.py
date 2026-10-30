@@ -33,7 +33,7 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path, PurePath
 
 # --- 헤더 스키마 ---
@@ -798,6 +798,83 @@ def cmd_lint(args) -> int:
     return 1 if any(f.level == "error" for f in findings) else 0
 
 
+# --- git에서 유도하는 값 ---
+
+
+def today() -> str:
+    return date.today().isoformat()
+
+
+def git_created_date(root: Path, rel: str) -> str | None:
+    """파일이 처음 추가된 커밋 날짜(YYYY-MM-DD). --follow로 이름 바뀐 파일도 원래 추가일을 찾는다.
+
+    git log는 최신순이라 마지막 줄이 가장 오래된 추가다. 추적되지 않은 파일은 None."""
+    out = git(["log", "--diff-filter=A", "--follow", "--format=%as", "--", rel], root)
+    lines = [line for line in (out or "").splitlines() if line.strip()]
+    return lines[-1] if lines else None
+
+
+def git_last_date(root: Path, rel: str) -> str | None:
+    """파일을 마지막으로 바꾼 커밋 날짜. 추적되지 않은 파일은 None."""
+    out = (git(["log", "-1", "--follow", "--format=%as", "--", rel], root) or "").strip()
+    return out or None
+
+
+def git_user(root: Path) -> str | None:
+    return (git(["config", "user.name"], root) or "").strip() or None
+
+
+def git_authors(root: Path, rel: str) -> list[str]:
+    """파일을 고친 git 작성자 이름, 처음 등장한 순서(오래된 것부터)로 중복 없이."""
+    # --follow와 --reverse를 같이 쓰면 git이 이름 바뀌기 전 기록을 놓치므로 뒤집기는 여기서 한다.
+    out = git(["log", "--follow", "--format=%an", "--", rel], root) or ""
+    names: list[str] = []
+    for name in reversed(out.splitlines()):
+        if name.strip() and name not in names:
+            names.append(name)
+    return names
+
+
+def derive_fields(ws: Workspace, rel: str, license_: str | None) -> dict:
+    """init·new가 쓰는 새 헤더. 사람이 쓸 필드는 비워 두고, git이 아는 것만 채운다(B7).
+
+    추적되지 않은 새 파일은 오늘 날짜와 git 사용자 이름을 쓴다. 라이선스는
+    --license > 저장소 LICENSE > NOASSERTION(lint가 B5로 잡아 사람이 채우게 한다)."""
+    created = git_created_date(ws.root, rel) or today()
+    updated = git_last_date(ws.root, rel) or today()
+    authors = git_authors(ws.root, rel) or [git_user(ws.root) or os.environ.get("USER", "unknown")]
+    return {
+        "title": PurePath(rel).stem,
+        "description": "",
+        "authors": authors,
+        "license": license_ or repo_license(ws.root) or "NOASSERTION",
+        "status": "draft",
+        "created_date": created,
+        "updated_date": max(created, updated),
+    }
+
+
+def insert_header(text: str, path, fields: dict) -> str:
+    """헤더를 shebang·encoding 줄 바로 뒤(.md는 맨 앞)에 끼워 넣는다."""
+    prefix = prefix_for(path) or ""
+    lines = text.split("\n")
+    i = header_start(lines, prefix)
+    block = render_header(fields, prefix).rstrip("\n").split("\n")
+    return "\n".join(lines[:i] + block + lines[i:])
+
+
+def cmd_init(args) -> int:
+    """헤더가 없는 파일에만 넣는다. 이미 있으면 건드리지 않으므로 몇 번을 돌려도 같다."""
+    ws = Workspace.load()
+    for t in walk_targets(args.paths or ["."], ws):
+        if extract_header(t.text, t.rel) is not None:
+            continue
+        fields = derive_fields(ws, t.rel, args.license)
+        (ws.root / t.rel).write_text(insert_header(t.text, t.rel, fields), encoding="utf-8")
+        print(f"{t.display}: header added")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="source-header", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -807,6 +884,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--since", metavar="REF", help="REF 이후 바뀐 파일만 검사(CI용)")
     p.add_argument("--strict", action="store_true", help="모르는 필드도 오류로")
     p.set_defaults(func=cmd_lint)
+    p = sub.add_parser("init", help="헤더 없는 파일에 git에서 유도한 헤더를 넣는다")
+    p.add_argument("paths", nargs="*", help="파일·디렉터리(재귀). 기본은 현재 디렉터리")
+    p.add_argument("--license", help="저장소 LICENSE 대신 쓸 SPDX 식")
+    p.set_defaults(func=cmd_init)
     return parser
 
 
