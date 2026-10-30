@@ -446,6 +446,104 @@ class TestLintLicense(TempDirCase):
         self.assertEqual(self.lint(fields_with(upstream=url)), [])
 
 
+class GitCase(TempDirCase):
+    """임시 git 저장소 하나를 쓰는 테스트 기반 클래스."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.git("init", "-q", "-b", "main")
+        self.git("config", "user.name", "tester")
+        self.git("config", "user.email", "tester@example.com")
+        self.git("config", "commit.gpgsign", "false")
+
+    def git(self, *args: str, env: dict | None = None) -> str:
+        res = subprocess.run(
+            ["git", *args], cwd=self.tmp, capture_output=True, text=True, check=True,
+            env={**os.environ, **(env or {})},
+        )
+        return res.stdout
+
+    def commit(self, message: str, date: str | None = None, author: str | None = None) -> None:
+        env = {}
+        if date:
+            env.update(GIT_AUTHOR_DATE=f"{date}T12:00:00", GIT_COMMITTER_DATE=f"{date}T12:00:00")
+        args = ["commit", "-q", "-m", message]
+        if author:
+            args += ["--author", author]
+        self.git(*args, env=env)
+
+    def cli(self, *args: str) -> subprocess.CompletedProcess:
+        return run_cli(list(args), self.tmp)
+
+
+BAD = py_file(fields_with(status="bogus"))
+GOOD = py_file(CANONICAL_FIELDS)
+
+
+class TestLintTargets(GitCase):
+    """TASK-1#5 lint 대상 선택"""
+
+    def test_directory_recursion_and_default_excludes(self) -> None:
+        """TASK-1#5 디렉터리는 재귀로 펼치고 기본 제외 경로와 모르는 확장자는 건너뛴다"""
+        self.write("src/deep/a.py", BAD)
+        self.write("src/b.ts", sh.render_header(fields_with(status="bogus"), "//"))
+        for skipped in ("node_modules/x.py", ".venv/x.py", "backlog/tasks/x.md",
+                        "opensource/x.py", "sub/node_modules/y.js", "data.json"):
+            self.write(skipped, "no header\n")
+        res = self.cli("lint", ".")
+        self.assertEqual(res.returncode, 1)
+        reported = sorted({line.split(":")[0] for line in res.stdout.splitlines()})
+        self.assertEqual(reported, ["src/b.ts", "src/deep/a.py"])
+        self.assertEqual(self.cli("lint").stdout, res.stdout)  # 인자가 없으면 "."
+
+    def test_config_include_exclude(self) -> None:
+        """TASK-1#5 .source-header.json의 include/exclude 글롭을 따른다"""
+        self.write(".source-header.json", '{"include": ["src/**"], "exclude": ["src/gen/**"]}')
+        self.write("src/a.py", BAD)
+        self.write("src/gen/b.py", BAD)
+        self.write("tools/c.py", BAD)
+        res = self.cli("lint", ".")
+        self.assertEqual([line.split(":")[0] for line in res.stdout.splitlines()], ["src/a.py"])
+
+    def test_staged_reads_index_not_worktree(self) -> None:
+        """TASK-1#5 --staged는 git show :path로 커밋될 내용을 검사한다"""
+        self.write("a.py", BAD)
+        self.git("add", "a.py")
+        self.write("a.py", GOOD)  # 작업 트리만 고친다
+        self.write("untracked.py", BAD)  # stage 안 된 파일은 대상이 아니다
+        res = self.cli("lint", "--staged")
+        self.assertEqual(res.returncode, 1)
+        self.assertEqual({line.split(":")[0] for line in res.stdout.splitlines()}, {"a.py"})
+        self.git("add", "a.py")
+        self.write("a.py", BAD)  # 이번엔 index가 맞고 작업 트리가 틀렸다
+        res = self.cli("lint", "--staged")
+        self.assertEqual((res.returncode, res.stdout), (0, ""))
+
+    def test_since_ref(self) -> None:
+        """TASK-1#5 --since <ref>는 그 이후 바뀐 파일만 검사한다"""
+        self.write("old.py", BAD)
+        self.git("add", ".")
+        self.commit("base")
+        self.git("tag", "base")
+        self.write("new.py", BAD)
+        self.git("add", "new.py")
+        self.commit("next")
+        self.write("old_untouched.py", BAD)  # 추적되지 않은 파일은 diff에 없다
+        res = self.cli("lint", "--since", "base")
+        self.assertEqual(res.returncode, 1)
+        self.assertEqual({line.split(":")[0] for line in res.stdout.splitlines()}, {"new.py"})
+        bad_ref = self.cli("lint", "--since", "no-such-ref")
+        self.assertEqual(bad_ref.returncode, 2)
+        self.assertIn("no-such-ref", bad_ref.stderr)
+
+    def test_paths_reported_relative_to_cwd(self) -> None:
+        """TASK-1#5 하위 디렉터리에서 실행해도 --staged 경로는 cwd 기준으로 보인다"""
+        self.write("pkg/a.py", BAD)
+        self.git("add", ".")
+        res = run_cli(["lint", "--staged"], self.tmp / "pkg")
+        self.assertTrue(res.stdout.startswith("a.py:"), res.stdout)
+
+
 # == Coverage ==
 
 

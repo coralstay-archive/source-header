@@ -27,6 +27,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import re
 import subprocess
 import sys
@@ -626,28 +628,171 @@ def git(args: list[str], cwd: Path) -> str | None:
     return res.stdout if res.returncode == 0 else None
 
 
-def iter_files(paths: list[str]):
-    """경로 인자를 파일 목록으로. 디렉터리는 재귀로 펼친다."""
+# --- 대상 선택 ---
+
+CONFIG_NAME = ".source-header.json"
+DEFAULT_INCLUDE = ["**"]
+DEFAULT_EXCLUDE = ["**/node_modules/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**",
+                   "**/opensource/**", "**/.opensource/**", "**/backlog/**"]
+
+
+def glob_re(pattern: str) -> re.Pattern:
+    """저장소 상대 경로 글롭 → 정규식. `**`는 /를 넘고(`**/`는 0단계도), `*`·`?`는 넘지 않는다."""
+    out, i = [], 0
+    while i < len(pattern):
+        if pattern.startswith("**/", i):
+            out.append("(?:.*/)?")
+            i += 3
+        elif pattern.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif pattern[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        elif pattern[i] == "?":
+            out.append("[^/]")
+            i += 1
+        else:
+            out.append(re.escape(pattern[i]))
+            i += 1
+    return re.compile("".join(out) + r"\Z")
+
+
+@dataclass
+class Workspace:
+    """한 번 실행하는 동안의 위치 정보와 설정. 경로는 모두 resolve해서 비교한다(macOS /private 등)."""
+
+    cwd: Path
+    root: Path
+    include: list
+    exclude: list
+
+    @classmethod
+    def load(cls) -> Workspace:
+        cwd = Path.cwd().resolve()
+        root = repo_root(cwd).resolve()
+        config = {}
+        path = root / CONFIG_NAME
+        if path.is_file():
+            config = json.loads(path.read_text(encoding="utf-8"))
+        # 설정 파일의 키는 기본값을 대체한다. .git은 언제나 제외한다.
+        include = [glob_re(g) for g in config.get("include", DEFAULT_INCLUDE)]
+        exclude = [glob_re(g) for g in [*config.get("exclude", DEFAULT_EXCLUDE), ".git/**",
+                                        "**/.git/**"]]
+        return cls(cwd, root, include, exclude)
+
+    def rel(self, path: Path) -> str | None:
+        """저장소 루트 기준 posix 경로. 저장소 밖이면 None."""
+        try:
+            return path.resolve().relative_to(self.root).as_posix()
+        except ValueError:
+            return None
+
+    def display(self, rel: str) -> str:
+        """사람에게 보일 경로(cwd 기준)."""
+        return os.path.relpath(self.root / rel, self.cwd)
+
+    def selected(self, rel: str | None) -> bool:
+        """헤더를 달 수 있는 형식이고 include에 걸리며 exclude에 안 걸리는가."""
+        if rel is None:
+            return False
+        if prefix_for(rel) is None:
+            return False
+        if not any(p.match(rel) for p in self.include):
+            return False
+        return not any(p.match(rel) for p in self.exclude)
+
+    def pruned(self, rel_dir: str) -> bool:
+        """디렉터리 전체가 `<dir>/**` 꼴 exclude에 걸리면 내려가지 않는다(node_modules 등)."""
+        return any(p.match(rel_dir + "/x") and p.pattern.endswith(".*\\Z") for p in self.exclude)
+
+
+@dataclass
+class Target:
+    """검사할 파일 하나. text는 작업 트리 또는 인덱스에서 읽은 내용이다."""
+
+    rel: str
+    display: str
+    text: str
+
+
+def walk_targets(paths: list[str], ws: Workspace) -> list[Target]:
+    """경로 인자를 펼친다. 디렉터리는 재귀로, 대상 여부는 설정으로 거른다."""
+    seen: dict[str, Target] = {}
     for raw in paths:
-        p = Path(raw)
-        if p.is_dir():
-            yield from sorted(q for q in p.rglob("*") if q.is_file())
-        elif p.is_file():
-            yield p
+        start = Path(raw)
+        if start.is_file():
+            files = [start]
+        elif start.is_dir():
+            files = []
+            for dirpath, dirnames, filenames in os.walk(start):
+                base = Path(dirpath)
+                dirnames[:] = sorted(
+                    d for d in dirnames
+                    if d != ".git" and not ws.pruned(ws.rel(base / d) or "")
+                )
+                files.extend(base / f for f in sorted(filenames))
+        else:
+            print(f"source-header: {raw}: no such file or directory", file=sys.stderr)
+            continue
+        for path in files:
+            rel = ws.rel(path)
+            if rel in seen or not ws.selected(rel):
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            seen[rel] = Target(rel, ws.display(rel), text)
+    return list(seen.values())
+
+
+def staged_paths(ws: Workspace) -> list[str]:
+    """추가·수정되어 stage된 파일(삭제 제외), 저장소 루트 기준."""
+    out = git(["diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z"], ws.root) or ""
+    return [p for p in out.split("\0") if p]
+
+
+def staged_targets(ws: Workspace) -> list[Target]:
+    """인덱스의 내용(git show :path)을 읽는다. 커밋되는 것은 작업 트리가 아니라 인덱스다."""
+    targets = []
+    for rel in staged_paths(ws):
+        if not ws.selected(rel):
+            continue
+        text = git(["show", f":{rel}"], ws.root)
+        if text is not None:
+            targets.append(Target(rel, ws.display(rel), text))
+    return targets
+
+
+def since_targets(ws: Workspace, ref: str) -> list[Target] | None:
+    """ref 이후 바뀐(추가·수정) 파일의 작업 트리 내용. ref가 없으면 None."""
+    if git(["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"], ws.root) is None:
+        return None
+    out = git(["diff", "--name-only", "--diff-filter=ACMR", "-z", ref], ws.root) or ""
+    targets = []
+    for rel in sorted(p for p in out.split("\0") if p):
+        path = ws.root / rel
+        if ws.selected(rel) and path.is_file():
+            targets.append(Target(rel, ws.display(rel),
+                                  path.read_text(encoding="utf-8", errors="replace")))
+    return targets
 
 
 def cmd_lint(args) -> int:
-    cwd = Path.cwd()
-    root = repo_root(cwd)
-    default_license = repo_license(root)
+    ws = Workspace.load()
+    if args.staged:
+        targets = staged_targets(ws)
+    elif args.since:
+        targets = since_targets(ws, args.since)
+        if targets is None:
+            print(f"source-header: unknown ref '{args.since}'", file=sys.stderr)
+            return 2
+    else:
+        targets = walk_targets(args.paths or ["."], ws)
+    default_license = repo_license(ws.root)
     findings: list[Finding] = []
-    for path in iter_files(args.paths or ["."]):
-        if prefix_for(path) is None:
-            continue
-        text = path.read_text(encoding="utf-8", errors="replace")
-        ctx = LintContext(path=str(path), root=root, strict=args.strict,
+    for t in targets:
+        ctx = LintContext(path=t.display, root=ws.root, strict=args.strict,
                           default_license=default_license)
-        findings.extend(lint_text(text, str(path), ctx))
+        findings.extend(lint_text(t.text, t.display, ctx))
     for f in findings:
         print(f.format())
     return 1 if any(f.level == "error" for f in findings) else 0
@@ -657,7 +802,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="source-header", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("lint", help="헤더 규칙 검사")
-    p.add_argument("paths", nargs="*")
+    p.add_argument("paths", nargs="*", help="파일·디렉터리(재귀). 기본은 현재 디렉터리")
+    p.add_argument("--staged", action="store_true", help="인덱스에 stage된 내용을 검사")
+    p.add_argument("--since", metavar="REF", help="REF 이후 바뀐 파일만 검사(CI용)")
     p.add_argument("--strict", action="store_true", help="모르는 필드도 오류로")
     p.set_defaults(func=cmd_lint)
     return parser
