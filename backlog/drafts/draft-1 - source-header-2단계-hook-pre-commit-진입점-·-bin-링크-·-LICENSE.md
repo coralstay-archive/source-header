@@ -4,7 +4,7 @@ title: 'source-header 2단계: hook pre-commit 진입점 · bin 링크 · LICENS
 status: Draft
 assignee: []
 created_date: '2026-10-30T19:31:00Z'
-updated_date: '2026-10-30T19:32:00Z'
+updated_date: '2026-10-30T19:34:00Z'
 labels:
   - tool
   - hooks
@@ -34,6 +34,13 @@ dependencies: []
 - [ ] #2 ~/githubs/bin/source-header 심볼릭 링크가 있고 PATH에서 source-header --help가 동작한다
 - [ ] #3 LICENSE(AGPL-3.0 전문)와 README 라이선스 절이 있고, source-header lint .에서 L2 경고가 없다
 <!-- AC:END -->
+
+## Definition of Done
+<!-- DOD:BEGIN -->
+- [ ] #1 테스트 전체 통과(로그를 Implementation Notes에 첨부)
+- [ ] #2 ruff check . 통과
+- [ ] #3 source-header lint . 오류·경고 0
+<!-- DOD:END -->
 
 ## Implementation Plan
 

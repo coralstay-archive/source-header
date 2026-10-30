@@ -4,7 +4,7 @@ title: 'source-header 6단계: ~/githubs 기존 파일 전체에 헤더 적용 (
 status: Draft
 assignee: []
 created_date: '2026-10-30T19:31:00Z'
-updated_date: '2026-10-30T19:32:00Z'
+updated_date: '2026-10-30T19:34:00Z'
 labels:
   - rollout
 dependencies: []
@@ -40,6 +40,13 @@ dependencies: []
 - [ ] #3 적용 순서표(바로 가능한 저장소 → 작업 끝난 뒤 할 저장소)를 work-order에 반영하고, 저장소마다 후속 카드를 만든다
 - [ ] #4 .mailmap 기반 authors 정규화를 source-header init에 반영한다(테스트 포함)
 <!-- AC:END -->
+
+## Definition of Done
+<!-- DOD:BEGIN -->
+- [ ] #1 조사 결과 표(freeride 구분 규칙, dev-toolchain 작성자)를 Implementation Notes에 기록하고 유저 승인을 받음
+- [ ] #2 .mailmap 테스트 포함 전체 테스트 통과, ruff 통과
+- [ ] #3 저장소별 후속 draft가 만들어지고 work-order에 반영됨
+<!-- DOD:END -->
 
 ## Implementation Plan
 
