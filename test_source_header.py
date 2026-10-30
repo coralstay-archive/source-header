@@ -693,6 +693,17 @@ class TestFixStaged(GitCase):
         self.assertEqual(new_text.replace(line, ""), text.replace(
             "# updated_date: '2026-10-02 08:00'  # 커밋 때 자동", ""))
 
+    def test_lint_staged_reports_stale_date(self) -> None:
+        """TASK-1#7 TASK-1#B8 fix를 건너뛴 커밋도 lint --staged가 옛 updated_date를 오류(B8)로 잡는다"""
+        self.write("a.py", py_file(OLD, "x = 2\n"))
+        self.git("add", "a.py")
+        res = self.cli("lint", "--staged")
+        self.assertEqual(res.returncode, 1)
+        self.assertRegex(res.stdout, r"^a\.py:\d+: error: .* \(B8\)$")
+        self.assertEqual(self.cli("lint", "a.py").returncode, 0)  # 작업 트리 검사에는 HEAD 비교가 없다
+        self.cli("fix", "--staged")
+        self.assertEqual(self.cli("lint", "--staged").returncode, 0)
+
 
 class TestStatusAndNew(GitCase):
     """TASK-1#8 status·new 명령"""

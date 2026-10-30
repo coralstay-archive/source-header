@@ -285,6 +285,8 @@ class LintContext:
     default_license: str | None = None
     header: Header | None = None
     text: str = ""
+    staged: bool = False  # True면 head_text와 비교하는 B8 검사를 한다
+    head_text: str | None = None  # HEAD의 같은 파일(없으면 새 파일)
 
 
 def parse_date(value):
@@ -587,8 +589,21 @@ def rule_upstream(fields, ctx):
                      f"upstream '{upstream}' is not listed in THIRD_PARTY_NOTICES.md")]
 
 
+def rule_fresh(fields, ctx):
+    """B8 (--staged만) 본문이 HEAD와 다른데 updated_date가 오늘이 아님. fix --staged를 건너뛴 커밋을 막는다."""
+    if not ctx.staged:
+        return []
+    if ctx.head_text is not None and body_of(ctx.head_text, ctx.path) == body_of(ctx.text, ctx.path):
+        return []
+    updated = fields.get("updated_date")
+    if not isinstance(updated, str) or parse_date(updated) is None or updated[:10] == today():
+        return []  # 누락·형식 오류는 F001/D001이 보고한다
+    return [_finding(ctx, "updated_date", "error", "B8",
+                     f"content changed but updated_date is {updated}; run 'source-header fix --staged'")]
+
+
 RULES = [rule_required, rule_unknown, rule_types, rule_status, rule_dates, rule_lifecycle,
-         rule_date_order, rule_license, rule_upstream]
+         rule_date_order, rule_license, rule_upstream, rule_fresh]
 
 
 def lint_text(text: str, path: str, ctx: LintContext) -> list[Finding]:
@@ -791,7 +806,9 @@ def cmd_lint(args) -> int:
     findings: list[Finding] = []
     for t in targets:
         ctx = LintContext(path=t.display, root=ws.root, strict=args.strict,
-                          default_license=default_license)
+                          default_license=default_license, staged=args.staged)
+        if args.staged:
+            ctx.head_text = git(["show", f"HEAD:{t.rel}"], ws.root)
         findings.extend(lint_text(t.text, t.display, ctx))
     for f in findings:
         print(f.format())
