@@ -175,6 +175,25 @@ source-header hook pre-commit          # git pre-commit 진입점: fix --staged 
 - 일부만 staged된 파일(작업 트리에 stage하지 않은 변경이 더 있는 파일)은 고치지 않고 B9 오류로
   exit 1이다. 고친 뒤 `git add`하면 stage하지 않은 변경까지 커밋에 섞이기 때문이다.
 
+### authors와 `.mailmap`
+
+`init`·`new`의 authors는 git mailmap을 거친 이름이다(`git log --use-mailmap --format=%aN`,
+추적 안 된 파일의 git 사용자는 `git check-mailmap`). 도구가 `.mailmap`을 직접 읽지 않고 git에
+맡기므로 저장소의 `.mailmap`뿐 아니라 `mailmap.file`·`mailmap.blob` 설정도 그대로 따른다.
+같은 사람이 여러 이름으로 나오면 처음 등장한 순서로 한 번만 쓴다.
+
+계정 이름이 바뀌어(cpu-once → amosQP → coralstay) 옛 커밋에 옛 이름·이메일이 남아 있으면
+저장소 루트 `.mailmap`에 정규 이름으로 묶는다.
+
+```text
+# 정규 이름 <정규 이메일>  옛 이름 <옛 이메일>
+coralstay <231006716+coralstay@users.noreply.github.com> cpu-once <sunrisesong6@gmail.com>
+coralstay <231006716+coralstay@users.noreply.github.com> <231006716+cpu-once@users.noreply.github.com>
+coralstay <231006716+coralstay@users.noreply.github.com> <231006716+amosQP@users.noreply.github.com>
+```
+
+저장소마다 두기 싫으면 `git config --global mailmap.file ~/.mailmap`으로 한 파일을 함께 쓴다.
+
 ## 템플릿
 
 `templates/`에 언어별 시작 파일이 있다(python.py, shell.sh, typescript.ts, go.go, sql.sql,

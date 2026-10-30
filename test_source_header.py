@@ -10,6 +10,7 @@
 # ---
 # TASK-1: source-header 1단계 - 헤더 스키마·파서·lint·init·fix·status·new
 # TASK-2: source-header 2단계 - hook pre-commit 진입점 · bin 링크 · LICENSE
+# TASK-3: source-header 6단계 - 기존 파일 적용 · .mailmap 기반 authors 정규화
 #
 # 하이픈이 든 source-header.py는 import 문으로 못 불러오므로 importlib로 로드한다.
 # git이 필요한 테스트는 임시 디렉터리에 저장소를 새로 만들어 CLI를 subprocess로 돌린다.
@@ -982,6 +983,64 @@ class TestLicenseFile(unittest.TestCase):
         section = readme.split("## 라이선스", 1)[1]
         self.assertIn("AGPL-3.0-only", section)
         self.assertIn("source-header hook pre-commit", readme)
+
+
+class TestMailmapAuthors(GitCase):
+    """TASK-3#4 authors는 git mailmap으로 정규화한다
+
+    계정 이름이 cpu-once → amosQP → coralstay로 바뀌어 옛 커밋에 옛 이름이 남아 있다.
+    .mailmap을 직접 파싱하지 않고 git의 %aN·check-mailmap에 맡기므로 mailmap.file·
+    mailmap.blob 설정도 같이 따른다."""
+
+    MAILMAP = (
+        "coralstay <coralstay@example.com> cpu-once <sunrisesong6@gmail.com>\n"
+        "coralstay <coralstay@example.com> <231006716+amosQP@users.noreply.github.com>\n"
+    )
+
+    def make_history(self) -> None:
+        """옛 이름 두 개(cpu-once, amosQP)로 차례로 고친 파일."""
+        self.write("tool.py", "print(1)\n")
+        self.git("add", ".")
+        self.commit("add", "2026-01-05", "cpu-once <sunrisesong6@gmail.com>")
+        self.write("tool.py", "print(2)\n")
+        self.git("add", ".")
+        self.commit("edit", "2026-02-01", "amosQP <231006716+amosQP@users.noreply.github.com>")
+
+    def init_authors(self) -> list[str]:
+        res = self.cli("init", "tool.py")
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        return sh.extract_header((self.tmp / "tool.py").read_text(), "tool.py").fields["authors"]
+
+    def test_without_mailmap_old_names_remain(self) -> None:
+        """TASK-3#4 .mailmap이 없으면 옛 이름이 처음 등장한 순서대로 그대로 남는다"""
+        self.make_history()
+        self.assertEqual(self.init_authors(), ["cpu-once", "amosQP"])
+
+    def test_mailmap_merges_renamed_identities(self) -> None:
+        """TASK-3#4 .mailmap이 두 옛 이름을 coralstay로 묶으면 init은 authors: [coralstay]를 쓴다"""
+        self.make_history()
+        self.write(".mailmap", self.MAILMAP)
+        self.assertEqual(self.init_authors(), ["coralstay"])
+
+    def test_mailmap_file_config(self) -> None:
+        """TASK-3#4 저장소 밖 파일도 mailmap.file 설정으로 따른다(git이 해석하므로)"""
+        self.make_history()
+        holder = tempfile.TemporaryDirectory()
+        self.addCleanup(holder.cleanup)
+        outside = Path(holder.name)
+        (outside / "mailmap").write_text(self.MAILMAP, encoding="utf-8")
+        self.git("config", "mailmap.file", str(outside / "mailmap"))
+        self.assertEqual(sh.git_authors(self.tmp, "tool.py"), ["coralstay"])
+
+    def test_untracked_file_uses_mailmapped_git_user(self) -> None:
+        """TASK-3#4 추적 안 된 파일의 git 사용자 이름도 mailmap을 거친다"""
+        self.git("config", "user.name", "cpu-once")
+        self.git("config", "user.email", "sunrisesong6@gmail.com")
+        self.write(".mailmap", self.MAILMAP)
+        self.assertEqual(sh.git_user(self.tmp), "coralstay")
+        self.git("config", "user.name", "someone")
+        self.git("config", "user.email", "someone@example.com")
+        self.assertEqual(sh.git_user(self.tmp), "someone")
 
 
 # == Coverage ==

@@ -857,13 +857,29 @@ def git_last_date(root: Path, rel: str) -> str | None:
 
 
 def git_user(root: Path) -> str | None:
-    return (git(["config", "user.name"], root) or "").strip() or None
+    """git 사용자 이름. 이메일이 있으면 mailmap을 거친 정규 이름을 돌려준다(TASK-3#4).
+
+    git_authors와 같은 이유로 git check-mailmap에 맡긴다. 옛 이름으로 설정된 기계에서
+    새 파일을 만들어도 커밋된 파일과 같은 이름이 나와야 하기 때문이다."""
+    name = (git(["config", "user.name"], root) or "").strip()
+    email = (git(["config", "user.email"], root) or "").strip()
+    if name and email:
+        # 출력은 "이름 <이메일>"이다. 매핑이 없으면 입력이 그대로 돌아온다.
+        out = (git(["check-mailmap", f"{name} <{email}>"], root) or "").strip()
+        mapped = out.rsplit(" <", 1)[0].strip() if " <" in out else ""
+        name = mapped or name
+    return name or None
 
 
 def git_authors(root: Path, rel: str) -> list[str]:
-    """파일을 고친 git 작성자 이름, 처음 등장한 순서(오래된 것부터)로 중복 없이."""
+    """파일을 고친 git 작성자 이름, 처음 등장한 순서(오래된 것부터)로 중복 없이.
+
+    TASK-3#4 이름은 %aN(대문자 N)으로 읽어 git mailmap을 거친다. 계정 이름이 바뀌면
+    (cpu-once → amosQP → coralstay) 옛 커밋에 옛 이름이 남는데, .mailmap에 묶어 두면
+    한 사람으로 나온다. .mailmap을 직접 파싱하지 않는 이유: git이 저장소 .mailmap뿐
+    아니라 mailmap.file·mailmap.blob 설정까지 같은 규칙으로 해석해 주기 때문이다."""
     # --follow와 --reverse를 같이 쓰면 git이 이름 바뀌기 전 기록을 놓치므로 뒤집기는 여기서 한다.
-    out = git(["log", "--follow", "--format=%an", "--", rel], root) or ""
+    out = git(["log", "--follow", "--use-mailmap", "--format=%aN", "--", rel], root) or ""
     names: list[str] = []
     for name in reversed(out.splitlines()):
         if name.strip() and name not in names:
