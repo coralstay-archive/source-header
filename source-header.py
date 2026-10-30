@@ -34,6 +34,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from itertools import pairwise
 from pathlib import Path, PurePath
 
 # --- 헤더 스키마 ---
@@ -64,6 +65,8 @@ LIST_FIELDS = ("authors", "reviewers", "labels")
 DATE_FIELDS = ("created_date", "updated_date", "reviewed_date", "published_date",
                "deprecated_date")
 STATUSES = ("draft", "review", "published", "deprecated", "archived")
+# 날짜 형식: Backlog.md 카드처럼 날짜만, 또는 날짜 + 시:분
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}( \d{2}:\d{2})?$")
 
 # shebang 다음에 올 수 있는 PEP 263 encoding 줄
 ENCODING_RE = re.compile(r"^[ \t\f]*#.*?coding[:=]")
@@ -216,7 +219,7 @@ def _needs_quote(value: str) -> bool:
         return True
     if value in (">-", ">", "|", "|-") or value[0] in "'\"[{&*!%@`|>":
         return True
-    if value.startswith("- ") or value == "-" or " #" in value or value.startswith("#"):
+    if value.startswith(("- ", "#")) or value == "-" or " #" in value:
         return True
     return bool(DATE_RE.match(value))
 
@@ -232,9 +235,6 @@ def render_scalar(value: str) -> str:
     if _needs_quote(value):
         return "'" + value.replace("'", "''") + "'"
     return value
-
-
-DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}( \d{2}:\d{2})?$")
 
 
 def render_header(fields: dict, prefix: str) -> str:
@@ -289,12 +289,18 @@ class LintContext:
     head_text: str | None = None  # HEAD의 같은 파일(없으면 새 파일)
 
 
-def parse_date(value):
-    """헤더 날짜를 datetime으로. 형식이 틀리거나 실존하지 않는 날짜면 None."""
+def parse_date(value) -> date | None:
+    """헤더 날짜의 날짜 부분. 형식이 틀리거나 실존하지 않는 날짜·시각이면 None.
+
+    순서 비교(B4)는 날짜 단위라 시각은 검증만 하고 버린다. 시간대가 없는 값이므로
+    datetime 대신 date로 다룬다."""
     if not isinstance(value, str) or not DATE_RE.match(value):
         return None
+    day, _, clock = value.partition(" ")
+    if clock and not (int(clock[:2]) < 24 and int(clock[3:]) < 60):
+        return None
     try:
-        return datetime.strptime(value, "%Y-%m-%d %H:%M" if " " in value else "%Y-%m-%d")
+        return date.fromisoformat(day)
     except ValueError:
         return None
 
@@ -396,10 +402,10 @@ def rule_date_order(fields, ctx):
     for key in DATE_FIELDS:
         parsed = parse_date(fields.get(key))
         if parsed is not None:
-            days[key] = parsed.date()
+            days[key] = parsed
     chain = [k for k in ("created_date", "reviewed_date", "published_date", "deprecated_date")
              if k in days]
-    pairs = list(zip(chain, chain[1:]))
+    pairs = list(pairwise(chain))
     if "created_date" in days and "updated_date" in days:
         pairs.append(("created_date", "updated_date"))
     return [
@@ -412,23 +418,28 @@ def rule_date_order(fields, ctx):
 # --- 라이선스 ---
 
 # 오프라인에서 쓰는 SPDX 목록의 일부(흔히 쓰는 것). 여기 없는 것은 LicenseRef-로 쓴다.
-SPDX_IDS = {i.lower(): i for i in """
-0BSD AFL-3.0 AGPL-1.0-only AGPL-1.0-or-later AGPL-3.0-only AGPL-3.0-or-later Apache-1.1
-Apache-2.0 Artistic-2.0 BlueOak-1.0.0 BSD-1-Clause BSD-2-Clause BSD-2-Clause-Patent
-BSD-3-Clause BSD-3-Clause-Clear BSD-4-Clause BSL-1.0 CC-BY-4.0 CC-BY-SA-4.0 CC-BY-NC-4.0
-CC-BY-NC-SA-4.0 CC-BY-ND-4.0 CC0-1.0 CDDL-1.0 CDDL-1.1 CECILL-2.1 EPL-1.0 EPL-2.0 EUPL-1.2
-GFDL-1.3-only GFDL-1.3-or-later GPL-2.0-only GPL-2.0-or-later GPL-3.0-only GPL-3.0-or-later
-ISC LGPL-2.0-only LGPL-2.0-or-later LGPL-2.1-only LGPL-2.1-or-later LGPL-3.0-only
-LGPL-3.0-or-later LPPL-1.3c MIT MIT-0 MPL-1.1 MPL-2.0 MPL-2.0-no-copyleft-exception MS-PL
-MS-RL MulanPSL-2.0 NCSA ODbL-1.0 OFL-1.1 OpenSSL OSL-3.0 PostgreSQL PSF-2.0 Python-2.0
-Ruby SSPL-1.0 Unicode-3.0 Unicode-DFS-2016 Unlicense UPL-1.0 Vim W3C WTFPL X11 Zlib ZPL-2.1
-GPL-2.0 GPL-3.0 LGPL-2.1 LGPL-3.0 AGPL-3.0
-""".split()}
-SPDX_EXCEPTIONS = {e.lower() for e in """
-Autoconf-exception-3.0 Bison-exception-2.2 Classpath-exception-2.0 GCC-exception-2.0
-GCC-exception-3.1 LLVM-exception OpenJDK-assembly-exception-1.0 Qt-GPL-exception-1.0
-Qt-LGPL-exception-1.1 Font-exception-2.0 Linux-syscall-note openvpn-openssl-exception
-""".split()}
+SPDX_IDS = {i.lower(): i for i in (
+    "0BSD", "AFL-3.0", "AGPL-1.0-only", "AGPL-1.0-or-later", "AGPL-3.0-only",
+    "AGPL-3.0-or-later", "Apache-1.1", "Apache-2.0", "Artistic-2.0", "BlueOak-1.0.0",
+    "BSD-1-Clause", "BSD-2-Clause", "BSD-2-Clause-Patent", "BSD-3-Clause",
+    "BSD-3-Clause-Clear", "BSD-4-Clause", "BSL-1.0", "CC-BY-4.0", "CC-BY-SA-4.0",
+    "CC-BY-NC-4.0", "CC-BY-NC-SA-4.0", "CC-BY-ND-4.0", "CC0-1.0", "CDDL-1.0", "CDDL-1.1",
+    "CECILL-2.1", "EPL-1.0", "EPL-2.0", "EUPL-1.2", "GFDL-1.3-only", "GFDL-1.3-or-later",
+    "GPL-2.0-only", "GPL-2.0-or-later", "GPL-3.0-only", "GPL-3.0-or-later", "ISC",
+    "LGPL-2.0-only", "LGPL-2.0-or-later", "LGPL-2.1-only", "LGPL-2.1-or-later",
+    "LGPL-3.0-only", "LGPL-3.0-or-later", "LPPL-1.3c", "MIT", "MIT-0", "MPL-1.1", "MPL-2.0",
+    "MPL-2.0-no-copyleft-exception", "MS-PL", "MS-RL", "MulanPSL-2.0", "NCSA", "ODbL-1.0",
+    "OFL-1.1", "OpenSSL", "OSL-3.0", "PostgreSQL", "PSF-2.0", "Python-2.0", "Ruby",
+    "SSPL-1.0", "Unicode-3.0", "Unicode-DFS-2016", "Unlicense", "UPL-1.0", "Vim", "W3C",
+    "WTFPL", "X11", "Zlib", "ZPL-2.1", "GPL-2.0", "GPL-3.0", "LGPL-2.1", "LGPL-3.0",
+    "AGPL-3.0",
+)}
+SPDX_EXCEPTIONS = {e.lower() for e in (
+    "Autoconf-exception-3.0", "Bison-exception-2.2", "Classpath-exception-2.0",
+    "GCC-exception-2.0", "GCC-exception-3.1", "LLVM-exception",
+    "OpenJDK-assembly-exception-1.0", "Qt-GPL-exception-1.0", "Qt-LGPL-exception-1.1",
+    "Font-exception-2.0", "Linux-syscall-note", "openvpn-openssl-exception",
+)}
 SPDX_TOKEN_RE = re.compile(r"\(|\)|[A-Za-z0-9.+:-]+")
 LICENSE_REF_RE = re.compile(r"^(DocumentRef-[A-Za-z0-9.-]+:)?LicenseRef-[A-Za-z0-9.-]+$")
 
@@ -462,7 +473,7 @@ def valid_spdx(expr: str) -> bool:
         if tok.upper() in ("AND", "OR", "WITH") or tok == ")":
             return False
         take()
-        ident = tok[:-1] if tok.endswith("+") else tok
+        ident = tok.removesuffix("+")
         if ident.lower() not in SPDX_IDS and not LICENSE_REF_RE.match(ident):
             return False
         if (peek() or "").upper() == "WITH":
@@ -731,8 +742,10 @@ class Target:
     text: str
 
 
-def walk_targets(paths: list[str], ws: Workspace) -> list[Target]:
-    """경로 인자를 펼친다. 디렉터리는 재귀로, 대상 여부는 설정으로 거른다."""
+def walk_targets(paths: list[str], ws: Workspace, missing: list | None = None) -> list[Target]:
+    """경로 인자를 펼친다. 디렉터리는 재귀로, 대상 여부는 설정으로 거른다.
+
+    없는 경로는 missing에 모은다. 오타 난 경로를 조용히 통과시키지 않기 위해서다."""
     seen: dict[str, Target] = {}
     for raw in paths:
         start = Path(raw)
@@ -749,6 +762,8 @@ def walk_targets(paths: list[str], ws: Workspace) -> list[Target]:
                 files.extend(base / f for f in sorted(filenames))
         else:
             print(f"source-header: {raw}: no such file or directory", file=sys.stderr)
+            if missing is not None:
+                missing.append(raw)
             continue
         for path in files:
             rel = ws.rel(path)
@@ -801,7 +816,10 @@ def cmd_lint(args) -> int:
             print(f"source-header: unknown ref '{args.since}'", file=sys.stderr)
             return 2
     else:
-        targets = walk_targets(args.paths or ["."], ws)
+        missing: list[str] = []
+        targets = walk_targets(args.paths or ["."], ws, missing)
+        if missing:
+            return 2
     default_license = repo_license(ws.root)
     findings: list[Finding] = []
     for t in targets:
@@ -819,7 +837,8 @@ def cmd_lint(args) -> int:
 
 
 def today() -> str:
-    return date.today().isoformat()
+    """로컬 시간대의 오늘. 사람이 커밋하는 날짜와 같아야 하므로 UTC가 아니라 로컬이다."""
+    return datetime.now().astimezone().date().isoformat()
 
 
 def git_created_date(root: Path, rel: str) -> str | None:
@@ -924,7 +943,7 @@ def set_field(text: str, path, key: str, value) -> str:
 def stamp_like(old) -> str:
     """오늘 날짜를 기존 값과 같은 형식으로(HH:MM이 있었으면 지금 시각까지)."""
     if isinstance(old, str) and parse_date(old) and " " in old:
-        return datetime.now().strftime("%Y-%m-%d %H:%M")
+        return datetime.now().astimezone().strftime("%Y-%m-%d %H:%M")
     return today()
 
 

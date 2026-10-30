@@ -249,7 +249,7 @@ class TestLintFormat(TempDirCase):
             with self.subTest(key=key):
                 found = self.lint(fields_with(**{key: None}))
                 self.assertIn("F001", codes(found))
-                miss = [f for f in found if f.code == "F001"][0]
+                miss = next(f for f in found if f.code == "F001")
                 self.assertEqual((miss.level, miss.line), ("error", 1))
                 self.assertIn(key, miss.message)
 
@@ -688,7 +688,7 @@ class TestFixStaged(GitCase):
         self.git("add", "a.py")
         self.assertEqual(self.cli("fix", "--staged").returncode, 0)
         new_text = (self.tmp / "a.py").read_text()
-        line = [x for x in new_text.splitlines() if "updated_date" in x][0]
+        line = next(x for x in new_text.splitlines() if "updated_date" in x)
         self.assertRegex(line, rf"^# updated_date: '{TODAY} \d\d:\d\d'  # 커밋 때 자동$")
         self.assertEqual(new_text.replace(line, ""), text.replace(
             "# updated_date: '2026-10-02 08:00'  # 커밋 때 자동", ""))
@@ -767,7 +767,135 @@ class TestStatusAndNew(GitCase):
         self.assertFalse((self.tmp / "data.json").exists())
 
 
+TEMPLATES = ("python.py", "shell.sh", "typescript.ts", "go.go", "sql.sql", "markdown.md")
+RULE_CODES = ("H001", "H002", "F001", "F002", "F003", "F004", "F005", "S001", "D001",
+              "B1", "B2", "B3", "B4", "B5", "B6", "B8", "B9", "L1", "L2")
+
+
+def find_ruff() -> str | None:
+    local = Path.home() / "githubs/bin/ruff"
+    if local.exists():
+        return str(local)
+    import shutil
+
+    return shutil.which("ruff")
+
+
+class TestDocsTemplatesDogfood(unittest.TestCase):
+    """TASK-1#9 README·templates·자기 lint·ruff"""
+
+    def test_templates_have_commented_fields(self) -> None:
+        """TASK-1#9 언어별 템플릿은 필드마다 설명 주석을 달고, 헤더로 읽히며 lint 오류가 없다"""
+        for name in TEMPLATES:
+            with self.subTest(name=name):
+                path = HERE / "templates" / name
+                text = path.read_text(encoding="utf-8")
+                header = sh.extract_header(text, name)
+                self.assertIsNotNone(header)
+                for key in sh.REQUIRED:
+                    self.assertIn(key, header.fields)
+                lines = text.split("\n")
+                for key, lineno in header.lines.items():
+                    self.assertRegex(lines[lineno - 1], r"\S\s+# \S", f"{key} 줄에 설명 주석 없음")
+                ctx = sh.LintContext(path=name, root=HERE)
+                errors = [f for f in sh.lint_text(text, name, ctx) if f.level == "error"]
+                self.assertEqual(errors, [])
+
+    def test_self_lint_passes(self) -> None:
+        """TASK-1#9 TASK-1#D3 도구 자신의 소스·테스트·문서·템플릿이 자기 lint를 오류 없이 통과한다"""
+        res = run_cli(["lint", "."], HERE)
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertNotIn("error", res.stdout)
+        status = run_cli(["status"], HERE).stdout
+        for name in ("source-header.py", "test_source_header.py", "README.md", *TEMPLATES):
+            self.assertIn(name, status)
+
+    @unittest.skipUnless(find_ruff(), "ruff 없음")
+    def test_ruff_passes(self) -> None:
+        """TASK-1#9 TASK-1#D2 ruff check 통과"""
+        res = subprocess.run([find_ruff(), "check", "."], cwd=HERE, capture_output=True, text=True,
+                             check=False)
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+
+    def test_readme_documents_rules(self) -> None:
+        """TASK-1#9 TASK-1#D5 README에 규칙 표·status 전이·사용법이 있다"""
+        readme = (HERE / "README.md").read_text(encoding="utf-8")
+        for code in RULE_CODES:
+            self.assertRegex(readme, rf"\|\s*{code}\s*\|", f"규칙 표에 {code} 없음")
+        for section in ("## 규칙", "## status 전이", "## 사용법"):
+            self.assertIn(section, readme)
+        for status in sh.STATUSES:
+            self.assertIn(status, readme)
+        for cmd in ("lint", "init", "fix --staged", "status", "new"):
+            self.assertIn(f"source-header {cmd}", readme)
+
+    def test_unittest_discovers_suite(self) -> None:
+        """TASK-1#D1 python3 -m unittest로도 이 모듈의 테스트를 모두 찾는다(pytest 전용 기능 미사용)"""
+        suite = unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__])
+        self.assertGreaterEqual(suite.countTestCases(), 40)
+
+
+class TestBrokenSamples(GitCase):
+    """TASK-1#D4 깨뜨린 샘플에서 예상 오류와 exit 1"""
+
+    def test_broken_samples(self) -> None:
+        """TASK-1#D4 필수 누락·잘못된 status·옛 updated_date·라이선스 불일치"""
+        self.write("LICENSE", LICENSE_TEXTS["AGPL-3.0-only"])
+        self.write("missing.py", py_file(fields_with(license=None)))
+        self.write("status.py", py_file(fields_with(status="wip")))
+        self.write("license.py", py_file(fields_with(), "# SPDX-License-Identifier: MIT\n"))
+        self.write("stale.py", py_file(OLD, "x = 1\n"))
+        self.git("add", "stale.py")
+        self.commit("base")
+        res = self.cli("lint", "missing.py", "status.py", "license.py")
+        self.assertEqual(res.returncode, 1)
+        got = {(line.split(":")[0], line.rsplit("(", 1)[1].rstrip(")")) for line in res.stdout.splitlines()}
+        self.assertEqual(got, {("missing.py", "F001"), ("status.py", "S001"), ("license.py", "L1")})
+        self.write("stale.py", py_file(OLD, "x = 2\n"))
+        self.git("add", "stale.py")
+        res = self.cli("lint", "--staged")
+        self.assertEqual(res.returncode, 1)
+        self.assertIn("(B8)", res.stdout)
+        self.assertEqual(self.cli("fix", "--staged").returncode, 0)
+        self.assertEqual(self.cli("lint", "--staged").returncode, 0)
+
+
 # == Coverage ==
+
+
+class TestCoverageEdges(TempDirCase):
+    """규칙이 아니라 경계 동작을 채우는 테스트"""
+
+    def test_list_with_comma_uses_block_form(self) -> None:
+        fields = {"title": "t", "authors": ["Kim, Sung-Hoon", "b"]}
+        block = sh.render_header(fields, "//")
+        self.assertIn("//   - Kim, Sung-Hoon", block)
+        self.assertEqual(sh.extract_header(block, "a.ts").fields, fields)
+
+    def test_set_field_inserts_missing_key(self) -> None:
+        text = py_file(fields_with(updated_date=None))
+        out = sh.set_field(text, "a.py", "updated_date", "2026-10-31")
+        self.assertEqual(sh.extract_header(out, "a.py").fields["updated_date"], "2026-10-31")
+        self.assertEqual(sh.set_field("x = 1\n", "a.py", "k", "v"), "x = 1\n")
+
+    def test_glob_semantics(self) -> None:
+        self.assertTrue(sh.glob_re("**/node_modules/**").match("node_modules/a.js"))
+        self.assertTrue(sh.glob_re("**/node_modules/**").match("a/b/node_modules/c/d.js"))
+        self.assertFalse(sh.glob_re("src/*.py").match("src/a/b.py"))
+        self.assertTrue(sh.glob_re("src/?.py").match("src/a.py"))
+        self.assertFalse(sh.glob_re("a[1].py").match("a1.py"))  # [ 는 글자 그대로
+
+    def test_cli_misc_errors(self) -> None:
+        self.assertEqual(run_cli(["fix"], self.tmp).returncode, 2)
+        res = run_cli(["lint", "nope.py"], self.tmp)
+        self.assertIn("no such file", res.stderr)
+        self.assertEqual(res.returncode, 2)
+
+    def test_crlf_and_encoding_line(self) -> None:
+        text = "# -*- coding: utf-8 -*-\n" + py_file(CANONICAL_FIELDS)
+        self.assertEqual(sh.extract_header(text, "a.py").start, 2)
+        crlf = py_file(CANONICAL_FIELDS).replace("\n", "\r\n")
+        self.assertEqual(sh.extract_header(crlf, "a.py").fields["status"], "draft")
 
 
 if __name__ == "__main__":
