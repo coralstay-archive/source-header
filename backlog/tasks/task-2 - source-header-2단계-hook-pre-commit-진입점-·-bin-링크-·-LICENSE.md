@@ -1,10 +1,10 @@
 ---
 id: TASK-2
 title: 'source-header 2단계: hook pre-commit 진입점 · bin 링크 · LICENSE'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-10-30T19:31:00Z'
-updated_date: '2026-10-30T19:34:00Z'
+updated_date: '2026-10-30T19:35:00Z'
 labels:
   - tool
   - hooks
