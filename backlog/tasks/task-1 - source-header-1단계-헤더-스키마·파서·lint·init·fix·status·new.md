@@ -1,14 +1,19 @@
 ---
-id: DRAFT-1
+id: TASK-1
 title: 'source-header 1단계: 헤더 스키마·파서·lint·init·fix·status·new'
-status: Draft
+status: To Do
 assignee: []
 created_date: '2026-10-30T18:57:00Z'
-updated_date: '2026-10-30T18:57:00Z'
+updated_date: '2026-10-30T18:58:00Z'
 labels:
   - tool
   - ssot
 dependencies: []
+references:
+  - >-
+    /Users/flynn_macpro/githubs/coralstay-software-factory/components/claude-code-agile-hooks/scripts/work_order.py
+documentation:
+  - /Users/flynn_macpro/.claude/plans/giggly-kindling-snowglobe.md
 ---
 
 ## Description
