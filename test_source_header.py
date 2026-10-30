@@ -965,6 +965,25 @@ class TestSymlinkInvocation(GitCase):
         self.assertEqual(link.resolve(), MODULE_PATH)
 
 
+class TestLicenseFile(unittest.TestCase):
+    """TASK-2#3 LICENSE · README 라이선스 절"""
+
+    def test_repo_license_is_agpl_and_no_l2(self) -> None:
+        """TASK-2#3 저장소 LICENSE에서 AGPL-3.0을 감지하고 자기 lint에 L2 경고가 없다"""
+        self.assertEqual(sh.repo_license(HERE), "AGPL-3.0-only")
+        res = run_cli(["lint", "."], HERE)
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertNotIn("(L2)", res.stdout)
+
+    def test_readme_documents_license_and_hook(self) -> None:
+        """TASK-2#3 README에 라이선스 절(AGPL-3.0-only)과 hook pre-commit 사용법이 있다"""
+        readme = (HERE / "README.md").read_text(encoding="utf-8")
+        self.assertIn("## 라이선스", readme)
+        section = readme.split("## 라이선스", 1)[1]
+        self.assertIn("AGPL-3.0-only", section)
+        self.assertIn("source-header hook pre-commit", readme)
+
+
 # == Coverage ==
 
 

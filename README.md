@@ -135,10 +135,23 @@ source-header init [paths...] [--license SPDX]   # 헤더 없는 파일에 git �
 source-header fix --staged             # staged 파일의 updated_date를 오늘로 맞추고 다시 git add
 source-header status [--status published] [--task TASK-1]   # STATUS·FILE·TASK·UPDATED 표
 source-header new path/to/file.py --title 이름 [--task TASK-1] [--description 설명] [--license SPDX]
+source-header hook pre-commit          # git pre-commit 진입점: fix --staged → lint --staged
 ```
 
-pre-commit에서는 `source-header fix --staged && source-header lint --staged` 순서로 부른다
-(연결은 2단계 범위).
+실행 파일은 `~/githubs/bin/source-header` → `../dev-tools/source-header/source-header.py`
+심볼릭 링크다. `~/githubs/bin`을 PATH에 두면 어디서든 `source-header`로 부를 수 있다.
+
+### git pre-commit 훅 `source-header hook pre-commit`
+
+- 저장소 루트에 `.source-header.json`이 없으면 아무것도 하지 않고 exit 0이다(opt-in, B2).
+  헤더를 도입한 저장소만 빈 `{}`라도 이 파일을 두면 된다.
+- 있으면 `fix --staged`를 먼저 돌린다. fix가 실패하면(예: 일부만 staged된 파일, B9) lint를
+  돌리지 않고 그 exit 코드로 끝낸다(B1).
+- fix가 성공하면 `lint --staged`를 돌리고 그 exit 코드를 돌려준다. 오류가 있으면 1이라 커밋이
+  막힌다.
+
+저장소에 훅을 거는 일은 이 도구가 하지 않는다. coding-agent-git-commit-tool의 `.githooks`
+디스패처(`core.hooksPath`)가 `pre-commit.d/20-source-header`에서 이 명령을 부른다.
 
 ### 대상 선택 `.source-header.json`
 
@@ -175,3 +188,11 @@ uvx --with pytest pytest -q -p no:cacheprovider   # 또는 python3 -m unittest -
 ruff check .
 python3 source-header.py lint .
 ```
+
+## 라이선스
+
+AGPL-3.0-only. 전문은 [LICENSE](LICENSE)에 있다(형제 저장소 claude-code-agile-hooks의
+LICENSE와 같은 GNU Affero General Public License v3.0 원문).
+
+이 저장소의 소스 파일 헤더는 `license: AGPL-3.0-only`를 쓴다. `source-header lint`는 저장소
+LICENSE에서 AGPL-3.0을 감지해 헤더의 license와 계열이 다르면 L2 경고를 낸다.
