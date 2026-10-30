@@ -4,6 +4,7 @@ title: 'source-header 6단계: ~/githubs 기존 파일 전체에 헤더 적용 (
 status: Draft
 assignee: []
 created_date: '2026-10-30T19:31:00Z'
+updated_date: '2026-10-30T19:32:00Z'
 labels:
   - rollout
 dependencies: []
@@ -31,3 +32,11 @@ dependencies: []
 2. .source-header.json(include/exclude) 작성 → source-header init → 서브에이전트가 description 초안 → lint 오류 0
 3. 유저가 diff 검토 → 병합
 <!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 freeride 각 저장소의 '내가 짠 코드 vs 책 예제' 구분 규칙을 조사해 표로 정리하고 유저 승인을 받는다
+- [ ] #2 dev-toolchain의 외부 작성자 커밋을 확인해 AGPL 전환 가능 여부를 유저에게 보고한다
+- [ ] #3 적용 순서표(바로 가능한 저장소 → 작업 끝난 뒤 할 저장소)를 work-order에 반영하고, 저장소마다 후속 카드를 만든다
+- [ ] #4 .mailmap 기반 authors 정규화를 source-header init에 반영한다(테스트 포함)
+<!-- AC:END -->

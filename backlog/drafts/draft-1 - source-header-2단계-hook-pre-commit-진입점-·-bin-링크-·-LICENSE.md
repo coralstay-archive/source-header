@@ -4,6 +4,7 @@ title: 'source-header 2단계: hook pre-commit 진입점 · bin 링크 · LICENS
 status: Draft
 assignee: []
 created_date: '2026-10-30T19:31:00Z'
+updated_date: '2026-10-30T19:32:00Z'
 labels:
   - tool
   - hooks
@@ -26,3 +27,10 @@ dependencies: []
 - B1 (AC #1) fix가 실패(exit≠0)하면 lint를 돌리지 않고 같은 코드로 끝낸다
 - B2 (AC #1) .source-header.json이 없는 저장소에서는 검사하지 않는다(opt-in)
 <!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 source-header hook pre-commit이 B1·B2에 따라 fix --staged → lint --staged를 실행하고 그 exit 코드를 돌려준다. 임시 저장소에서 통과·차단·opt-out 세 경우를 테스트한다
+- [ ] #2 ~/githubs/bin/source-header 심볼릭 링크가 있고 PATH에서 source-header --help가 동작한다
+- [ ] #3 LICENSE(AGPL-3.0 전문)와 README 라이선스 절이 있고, source-header lint .에서 L2 경고가 없다
+<!-- AC:END -->
