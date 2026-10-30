@@ -4,7 +4,7 @@ title: 'source-header 1단계: 헤더 스키마·파서·lint·init·fix·status
 status: To Do
 assignee: []
 created_date: '2026-10-30T18:57:00Z'
-updated_date: '2026-10-30T18:58:00Z'
+updated_date: '2026-10-30T18:59:00Z'
 labels:
   - tool
   - ssot
@@ -56,13 +56,37 @@ status: draft · review · published · deprecated · archived
 - [ ] #9 README 규칙 문서와 언어별 templates/(필드마다 설명 주석)를 만들고, 도구 자신의 소스·테스트 파일이 자기 lint를 통과한다. ruff check 통과
 <!-- AC:END -->
 
+## Definition of Done
+<!-- DOD:BEGIN -->
+- [ ] #1 python3 -m unittest -q 전체 통과 (출력 로그를 Implementation Notes에 첨부)
+- [ ] #2 ruff check . 통과
+- [ ] #3 source-header lint . 가 도구 자신의 파일에서 오류 0
+- [ ] #4 깨뜨린 샘플(필수 누락·잘못된 status·옛 updated_date·라이선스 불일치)에서 예상 오류와 exit 1을 실측
+- [ ] #5 README에 규칙 표·status 전이·사용법 기록
+<!-- DOD:END -->
+
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. 저장소 설정: .tool-versions(python 3.12.13, ruff), .gitignore, .claude-code-agile-hooks.json(testCommand: python3 -m unittest -q, testFirst sourceGlobs=source-header.py testGlobs=test_*.py)
-2. source-header.py 단일 파일(표준 라이브러리만): COMMENT_PREFIX → extract_header/render_header → parse_frontmatter(agile-hooks scripts/work_order.py 사본) → git 유도 함수 → RULES 목록 → argparse 서브커맨드(lint, init, fix, status, new)
-3. AC마다 test_source_header.py에 <ID>#n·<ID>#Bk 표식 테스트 먼저 → 구현 → 커밋. 구현은 서브에이전트(워크트리)에 위임, 메인이 리뷰·재실행
-4. 주석: 모듈 머리에 이 헤더 형식 자체를 적용(dogfooding) + 핵심 함수마다 무엇/왜 주석
-5. README.md(규칙 표·status 전이·사용법), templates/(python, shell, typescript, go, sql, markdown) 필드마다 설명 주석
-6. bin 링크(bin/source-header)는 2단계에서 git-pre-commit과 함께 만든다
+### Subjective
+유저 결정(2026-10-31): 프로젝트 상태 관리와 간단한 소스 코드 관리의 SSOT는 소스 파일과 그 주석이다. 유저가 만든 모든 소스 파일 맨 위 주석에 YAML 프론트 매터(Backlog.md 필드 관례 + license·authors·status)를 두고, 이를 검사·유지하는 도구를 만든다. Claude Code가 없어도 동작해야 하고, 실행 파일과 git pre-commit은 ~/githubs/bin 심볼릭 링크로 관리한다(2단계). 이 카드는 6단계 중 1단계(도구 핵심)다.
+
+### Objective
+- 워크스페이스에 PyYAML이 없다. 형제 도구 dev-tools/central-docs-collector는 표준 라이브러리만 쓰는 단일 .py 파일 + importlib로 로드하는 unittest 구조이고, .tool-versions는 python 3.12.13 + ruff다.
+- agile-hooks의 parse_frontmatter()(scripts/work_order.py, 사본 3개를 dedup REGISTRY가 관리)가 Backlog.md가 쓰는 YAML 부분집합(스칼라, 따옴표, [a, b], - item)을 이미 파싱한다.
+- Backlog.md 카드 날짜는 'YYYY-MM-DD HH:MM' 따옴표 문자열이다.
+- ~/githubs 저장소들에는 기존 git 훅이 없고, core.hooksPath도 설정돼 있지 않다.
+
+### Assessment
+- 주석 접두사를 벗기면 Markdown 프론트 매터와 같은 텍스트가 되므로 parse_frontmatter 사본을 재사용해 파서 동작을 훅과 맞춘다. 새 YAML 파서는 만들지 않는다.
+- 규칙은 (fields, ctx) → [Finding] 함수 목록으로 두어 단계마다 추가하기 쉽게 한다(3단계 교차 검사도 같은 방식).
+- --staged 검사는 작업 트리가 아니라 git show :path로 커밋될 내용을 본다.
+- fix는 부분 staged 파일을 건드리지 않는다(의도하지 않은 변경 혼입 방지).
+- 사람이 쓰는 필드(title, description, status, task)와 git에서 유도하는 필드(authors, created_date, updated_date, license)를 나눠 SSOT가 틀어지지 않게 한다.
+
+### Plan
+1. 저장소 설정: .tool-versions, .gitignore, .claude-code-agile-hooks.json(testCommand, testFirst)
+2. AC #1 파서·렌더 → #2 형식 규칙·출력 → #3 상태·날짜 규칙 → #4 라이선스 → #5 대상 선택 → #6 init → #7 fix → #8 status·new → #9 README·templates·dogfooding·ruff 순서로 진행한다. AC마다 test_source_header.py에 TASK-1#n·TASK-1#Bk 표식 테스트를 먼저 쓰고, 구현하고, 커밋한다.
+3. 구현은 서브에이전트(워크트리)에 AC 묶음 단위로 위임하고, 메인이 diff 리뷰·테스트 재실행 후 AC를 체크한다.
+4. 주석: 모듈 머리에 헤더 형식 자체를 적용하고(dogfooding), 핵심 함수마다 무엇/왜 주석을 단다.
 <!-- SECTION:PLAN:END -->
