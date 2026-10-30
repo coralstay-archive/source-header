@@ -1033,6 +1033,30 @@ def cmd_new(args) -> int:
     return 0
 
 
+# --- git 훅 진입점 ---
+
+HOOKS = ["pre-commit"]
+
+
+def cmd_hook(args) -> int:
+    """git 훅이 부르는 진입점. 지금은 pre-commit = fix --staged → lint --staged.
+
+    훅 연결(.githooks 디스패처, core.hooksPath)은 coding-agent-git-commit-tool이 맡고, 여기서는
+    부를 명령만 준다. 로직은 cmd_fix·cmd_lint를 그대로 재사용한다.
+    - B2: 저장소 루트에 .source-header.json이 없으면 아무것도 하지 않는다(opt-in). 디스패처가
+      모든 저장소에 같은 훅을 걸어도, 헤더를 도입하지 않은 저장소의 커밋은 막지 않기 위해서다.
+    - B1: fix가 실패하면 lint를 돌리지 않고 그 코드로 끝낸다. fix가 손대지 못한(부분 staged)
+      상태에서 lint까지 돌면 같은 파일을 두 번 보고해 원인이 흐려진다."""
+    root = repo_root(Path.cwd().resolve())
+    if not (root / CONFIG_NAME).is_file():
+        return 0
+    staged = argparse.Namespace(staged=True, since=None, paths=[], strict=False)
+    code = cmd_fix(staged)
+    if code != 0:
+        return code
+    return cmd_lint(staged)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="source-header", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1061,6 +1085,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--description")
     p.add_argument("--license", help="저장소 LICENSE 대신 쓸 SPDX 식")
     p.set_defaults(func=cmd_new)
+    p = sub.add_parser("hook", help="git 훅 진입점(.source-header.json이 있는 저장소에서만 동작)")
+    # 훅 이름을 선택지로 두어 나중에 commit-msg 등을 같은 자리에 더할 수 있게 한다.
+    p.add_argument("name", choices=HOOKS, help="pre-commit: fix --staged 후 lint --staged")
+    p.set_defaults(func=cmd_hook)
     return parser
 
 

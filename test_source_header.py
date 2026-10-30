@@ -9,6 +9,7 @@
 # updated_date: '2026-10-31'
 # ---
 # TASK-1: source-header 1단계 - 헤더 스키마·파서·lint·init·fix·status·new
+# TASK-2: source-header 2단계 - hook pre-commit 진입점 · bin 링크 · LICENSE
 #
 # 하이픈이 든 source-header.py는 import 문으로 못 불러오므로 importlib로 로드한다.
 # git이 필요한 테스트는 임시 디렉터리에 저장소를 새로 만들어 CLI를 subprocess로 돌린다.
@@ -858,6 +859,80 @@ class TestBrokenSamples(GitCase):
         self.assertIn("(B8)", res.stdout)
         self.assertEqual(self.cli("fix", "--staged").returncode, 0)
         self.assertEqual(self.cli("lint", "--staged").returncode, 0)
+
+
+class TestHookPreCommit(GitCase):
+    """TASK-2#1 hook pre-commit: fix --staged → lint --staged"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.write("a.py", py_file(OLD, "x = 1\n"))
+        self.git("add", ".")
+        self.commit("base")
+
+    def opt_in(self) -> None:
+        self.write(sh.CONFIG_NAME, "{}\n")
+
+    def test_pass_runs_fix_then_lint(self) -> None:
+        """TASK-2#1 설정이 있는 저장소에서 fix가 updated_date를 고치고 lint가 통과하면 exit 0"""
+        self.opt_in()
+        self.write("a.py", py_file(OLD, "x = 2\n"))
+        self.git("add", "a.py")
+        res = self.cli("hook", "pre-commit")
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertIn("updated_date", res.stdout)  # fix가 돌았다
+        text = self.git("show", ":a.py")
+        self.assertEqual(sh.extract_header(text, "a.py").fields["updated_date"], TODAY)
+
+    def test_lint_error_blocks(self) -> None:
+        """TASK-2#1 staged 파일에 lint 오류가 있으면 exit 1로 커밋을 막는다"""
+        self.opt_in()
+        self.write("b.py", BAD)
+        self.git("add", "b.py")
+        res = self.cli("hook", "pre-commit")
+        self.assertEqual(res.returncode, 1)
+        self.assertRegex(res.stdout, r"b\.py:\d+: error: .*\(S001\)")
+
+    def test_no_config_is_noop(self) -> None:
+        """TASK-2#1 TASK-2#B2 .source-header.json이 없는 저장소는 깨진 파일이 있어도 조용히 exit 0"""
+        self.write("b.py", BAD)
+        self.git("add", "b.py")
+        before = self.git("show", ":b.py")
+        res = self.cli("hook", "pre-commit")
+        self.assertEqual((res.returncode, res.stdout, res.stderr), (0, "", ""))
+        self.assertEqual(self.git("show", ":b.py"), before)
+
+    def test_fix_failure_skips_lint(self) -> None:
+        """TASK-2#1 TASK-2#B1 fix가 실패(부분 staged)하면 lint를 돌리지 않고 같은 코드로 끝낸다"""
+        self.opt_in()
+        broken = py_file(dict(OLD, status="bogus"), "x = 2\n")
+        self.write("a.py", broken)
+        self.git("add", "a.py")
+        self.write("a.py", broken + "y = 3\n")  # stage 안 한 변경 → fix B9
+        res = self.cli("hook", "pre-commit")
+        self.assertEqual(res.returncode, 1)
+        self.assertIn("(B9)", res.stdout)
+        self.assertNotIn("(S001)", res.stdout)  # lint가 돌았다면 S001이 나왔을 것
+
+    def test_fix_exit_code_is_passed_through(self) -> None:
+        """TASK-2#1 TASK-2#B1 fix의 exit 코드를 그대로 돌려주고 lint는 부르지 않는다. 성공하면 lint 코드를 돌려준다"""
+        from unittest import mock
+
+        self.opt_in()
+        cwd = os.getcwd()
+        os.chdir(self.tmp)
+        try:
+            with mock.patch.object(sh, "cmd_fix", return_value=3), \
+                    mock.patch.object(sh, "cmd_lint", return_value=0) as lint:
+                self.assertEqual(sh.main(["hook", "pre-commit"]), 3)
+                lint.assert_not_called()
+            with mock.patch.object(sh, "cmd_fix", return_value=0) as fix, \
+                    mock.patch.object(sh, "cmd_lint", return_value=1) as lint:
+                self.assertEqual(sh.main(["hook", "pre-commit"]), 1)
+                self.assertTrue(fix.call_args.args[0].staged)
+                self.assertTrue(lint.call_args.args[0].staged)
+        finally:
+            os.chdir(cwd)
 
 
 # == Coverage ==
