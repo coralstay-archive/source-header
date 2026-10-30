@@ -694,6 +694,68 @@ class TestFixStaged(GitCase):
             "# updated_date: '2026-10-02 08:00'  # 커밋 때 자동", ""))
 
 
+class TestStatusAndNew(GitCase):
+    """TASK-1#8 status·new 명령"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.write("src/a.py", py_file(fields_with(task="TASK-1", updated_date="2026-10-30")))
+        self.write("b.ts", sh.render_header(dict(PUBLISHED, task="TASK-2"), "//") + "x\n")
+        self.write("c.py", py_file(fields_with(task=None)))
+        self.write("plain.py", "print(1)\n")
+
+    def test_status_table(self) -> None:
+        """TASK-1#8 status는 헤더를 모아 STATUS·FILE·TASK·UPDATED 표를 출력한다"""
+        res = self.cli("status")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        rows = [line.split() for line in res.stdout.splitlines()]
+        self.assertEqual(rows, [
+            ["STATUS", "FILE", "TASK", "UPDATED"],
+            ["published", "b.ts", "TASK-2", "2026-10-31"],
+            ["draft", "c.py", "-", "2026-10-31", "09:30"],
+            ["draft", "src/a.py", "TASK-1", "2026-10-30"],
+        ])
+        # 열이 맞춰져 있다: 모든 줄에서 FILE 열이 같은 위치에서 시작한다
+        starts = {line.index(row[1]) for line, row in zip(res.stdout.splitlines(), rows)}
+        self.assertEqual(len(starts), 1)
+
+    def test_status_filters(self) -> None:
+        """TASK-1#8 --status/--task로 거른다"""
+        res = self.cli("status", "--status", "published")
+        self.assertEqual([line.split()[1] for line in res.stdout.splitlines()[1:]], ["b.ts"])
+        res = self.cli("status", "--task", "TASK-1")
+        self.assertEqual([line.split()[1] for line in res.stdout.splitlines()[1:]], ["src/a.py"])
+        res = self.cli("status", "--task", "task-1")  # Backlog.md ID는 대소문자를 가리지 않는다
+        self.assertEqual([line.split()[1] for line in res.stdout.splitlines()[1:]], ["src/a.py"])
+
+    def test_new_creates_file_with_header(self) -> None:
+        """TASK-1#8 new는 헤더가 들어간 새 파일을 만든다"""
+        res = self.cli("new", "pkg/tool.sh", "--title", "tool", "--task", "TASK-9",
+                       "--description", "도구 설명", "--license", "MIT")
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        text = (self.tmp / "pkg/tool.sh").read_text()
+        self.assertTrue(text.startswith("#!/usr/bin/env bash\n# ---\n"))
+        self.assertEqual(sh.extract_header(text, "tool.sh").fields, {
+            "title": "tool",
+            "description": "도구 설명",
+            "authors": ["tester"],
+            "license": "MIT",
+            "status": "draft",
+            "task": "TASK-9",
+            "created_date": TODAY,
+            "updated_date": TODAY,
+        })
+        self.assertEqual(self.cli("lint", "pkg/tool.sh").returncode, 0)
+
+    def test_new_refuses_existing_or_unknown(self) -> None:
+        """TASK-1#8 이미 있는 파일은 덮지 않고(exit 1), 주석을 못 다는 형식은 거부한다(exit 2)"""
+        before = (self.tmp / "plain.py").read_text()
+        self.assertEqual(self.cli("new", "plain.py", "--title", "x").returncode, 1)
+        self.assertEqual((self.tmp / "plain.py").read_text(), before)
+        self.assertEqual(self.cli("new", "data.json", "--title", "x").returncode, 2)
+        self.assertFalse((self.tmp / "data.json").exists())
+
+
 # == Coverage ==
 
 

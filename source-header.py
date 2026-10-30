@@ -946,6 +946,57 @@ def cmd_fix(args) -> int:
     return status
 
 
+# --- status · new ---
+
+
+def cmd_status(args) -> int:
+    """헤더를 모아 상태 표를 낸다. 파일이 SSOT이므로 이 표가 곧 프로젝트 상태 조회다."""
+    ws = Workspace.load()
+    rows = []
+    for t in sorted(walk_targets(args.paths or ["."], ws), key=lambda t: t.display):
+        header = extract_header(t.text, t.rel)
+        if header is None:
+            continue
+        f = header.fields
+        status, task = str(f.get("status") or "-"), str(f.get("task") or "-")
+        if args.status and status != args.status:
+            continue
+        if args.task and task.upper() != args.task.upper():
+            continue
+        rows.append((status, t.display, task, str(f.get("updated_date") or "-")))
+    table = [("STATUS", "FILE", "TASK", "UPDATED"), *rows]
+    widths = [max(len(row[i]) for row in table) for i in range(3)]
+    for row in table:
+        print("  ".join(cell.ljust(w) for cell, w in zip(row, widths)) + "  " + row[3])
+    return 0
+
+
+SHEBANGS = {".sh": "#!/usr/bin/env bash", ".bash": "#!/usr/bin/env bash"}
+
+
+def cmd_new(args) -> int:
+    """헤더가 들어간 새 파일을 만든다. 처음부터 헤더를 쓰게 하는 가장 쉬운 길이다."""
+    ws = Workspace.load()
+    path = Path(args.path)
+    if prefix_for(path) is None:
+        print(f"source-header: {args.path}: no comment syntax for this file type", file=sys.stderr)
+        return 2
+    if path.exists():
+        print(f"source-header: {args.path}: already exists", file=sys.stderr)
+        return 1
+    rel = ws.rel(path.parent.resolve() / path.name) or path.name
+    fields = derive_fields(ws, rel, args.license)
+    fields.update(title=args.title, description=args.description or "")
+    if args.task:
+        fields["task"] = args.task
+    shebang = SHEBANGS.get(path.suffix.lower())
+    text = (shebang + "\n" if shebang else "") + render_header(fields, prefix_for(path))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    print(f"{args.path}: created")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="source-header", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -962,6 +1013,18 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("fix", help="staged 파일의 updated_date를 고치고 다시 stage")
     p.add_argument("--staged", action="store_true", help="stage된 파일을 대상으로(필수)")
     p.set_defaults(func=cmd_fix)
+    p = sub.add_parser("status", help="헤더를 모아 STATUS·FILE·TASK·UPDATED 표 출력")
+    p.add_argument("paths", nargs="*", help="파일·디렉터리(재귀). 기본은 현재 디렉터리")
+    p.add_argument("--status", choices=STATUSES, help="이 status만")
+    p.add_argument("--task", help="이 task ID만(대소문자 무시)")
+    p.set_defaults(func=cmd_status)
+    p = sub.add_parser("new", help="헤더가 들어간 새 파일 만들기")
+    p.add_argument("path")
+    p.add_argument("--title", required=True)
+    p.add_argument("--task")
+    p.add_argument("--description")
+    p.add_argument("--license", help="저장소 LICENSE 대신 쓸 SPDX 식")
+    p.set_defaults(func=cmd_new)
     return parser
 
 
