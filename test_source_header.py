@@ -935,6 +935,36 @@ class TestHookPreCommit(GitCase):
             os.chdir(cwd)
 
 
+class TestSymlinkInvocation(GitCase):
+    """TASK-2#2 ~/githubs/bin 심볼릭 링크로 실행"""
+
+    def test_runs_through_relative_symlink(self) -> None:
+        """TASK-2#2 상대 경로 심볼릭 링크를 PATH에 두고 다른 디렉터리에서 --help·hook pre-commit이 동작한다"""
+        self.assertTrue(os.access(MODULE_PATH, os.X_OK), "source-header.py에 실행 권한 없음")
+        # macOS 임시 디렉터리는 /var → /private/var 링크 아래라, 상대 링크의 ..가 실제 경로를 따르도록 resolve한다
+        bindir = self.tmp.resolve() / "bin"
+        bindir.mkdir()
+        (bindir / "source-header").symlink_to(os.path.relpath(MODULE_PATH, bindir))
+        env = {**os.environ, "PATH": f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}"}
+
+        def run(*args: str) -> subprocess.CompletedProcess:
+            return subprocess.run(["source-header", *args], cwd=self.tmp, env=env,
+                                  capture_output=True, text=True, check=False)
+
+        res = run("--help")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("hook", res.stdout)
+        self.assertEqual(run("hook", "pre-commit").returncode, 0)  # 설정 없는 저장소 → opt-out
+
+    def test_bin_link_exists(self) -> None:
+        """TASK-2#2 ~/githubs/bin/source-header가 이 스크립트를 가리키는 상대 링크다"""
+        link = Path.home() / "githubs/bin/source-header"
+        if not link.is_symlink():
+            self.skipTest("~/githubs/bin/source-header 없음(다른 머신)")
+        self.assertFalse(os.path.isabs(os.readlink(link)))
+        self.assertEqual(link.resolve(), MODULE_PATH)
+
+
 # == Coverage ==
 
 
