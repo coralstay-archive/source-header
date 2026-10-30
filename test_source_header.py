@@ -620,6 +620,80 @@ class TestInit(GitCase):
         self.assertEqual(sh.extract_header(text, "other.sql").fields["license"], "AGPL-3.0-only")
 
 
+OLD = fields_with(created_date="2026-10-01", updated_date="2026-10-02")
+
+
+class TestFixStaged(GitCase):
+    """TASK-1#7 fix --staged"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.write("a.py", py_file(OLD, "x = 1\n"))
+        self.git("add", ".")
+        self.commit("base")
+
+    def updated(self, where: str = "worktree") -> str:
+        text = self.git("show", ":a.py") if where == "index" else (self.tmp / "a.py").read_text()
+        return sh.extract_header(text, "a.py").fields["updated_date"]
+
+    def test_body_change_sets_today_and_restages(self) -> None:
+        """TASK-1#7 TASK-1#B8 본문이 HEAD와 달라진 staged 파일의 updated_date는 오늘이고 다시 stage된다"""
+        self.write("a.py", py_file(OLD, "x = 2\n"))
+        self.git("add", "a.py")
+        res = self.cli("fix", "--staged")
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertEqual(self.updated(), TODAY)
+        self.assertEqual(self.updated("index"), TODAY)
+        self.assertEqual(self.git("diff", "--name-only"), "")  # 작업 트리 = 인덱스
+        self.assertIn("a.py", res.stdout)
+        # 고친 결과는 lint --staged를 통과한다
+        self.assertEqual(self.cli("lint", "--staged").returncode, 0)
+
+    def test_header_only_change_keeps_date(self) -> None:
+        """TASK-1#7 TASK-1#B8 헤더만 바뀌고 본문이 HEAD와 같으면 updated_date를 건드리지 않는다"""
+        self.write("a.py", py_file(dict(OLD, description="새 설명"), "x = 1\n"))
+        self.git("add", "a.py")
+        res = self.cli("fix", "--staged")
+        self.assertEqual((res.returncode, res.stdout), (0, ""))
+        self.assertEqual(self.updated("index"), "2026-10-02")
+
+    def test_new_file_gets_today(self) -> None:
+        """TASK-1#7 TASK-1#B8 HEAD에 없던 새 파일도 본문이 달라진 것으로 본다"""
+        self.write("b.py", py_file(OLD, "y = 1\n"))
+        self.git("add", "b.py")
+        self.assertEqual(self.cli("fix", "--staged").returncode, 0)
+        text = self.git("show", ":b.py")
+        self.assertEqual(sh.extract_header(text, "b.py").fields["updated_date"], TODAY)
+
+    def test_partially_staged_is_refused(self) -> None:
+        """TASK-1#7 TASK-1#B9 일부만 staged된 파일은 수정하지 않고 오류로 멈춘다(exit 1)"""
+        self.write("a.py", py_file(OLD, "x = 2\n"))
+        self.git("add", "a.py")
+        self.write("a.py", py_file(OLD, "x = 3\n"))  # stage 안 한 변경
+        before_index = self.git("show", ":a.py")
+        before_tree = (self.tmp / "a.py").read_text()
+        res = self.cli("fix", "--staged")
+        self.assertEqual(res.returncode, 1)
+        self.assertIn("a.py", res.stdout + res.stderr)
+        self.assertIn("B9", res.stdout + res.stderr)
+        self.assertEqual(self.git("show", ":a.py"), before_index)
+        self.assertEqual((self.tmp / "a.py").read_text(), before_tree)
+
+    def test_preserves_comment_and_time_format(self) -> None:
+        """TASK-1#7 TASK-1#B8 updated_date 줄만 바꾸고 그 줄의 설명 주석과 HH:MM 형식은 유지한다"""
+        text = py_file(OLD, "x = 9\n").replace(
+            "# updated_date: '2026-10-02'", "# updated_date: '2026-10-02 08:00'  # 커밋 때 자동"
+        )
+        self.write("a.py", text)
+        self.git("add", "a.py")
+        self.assertEqual(self.cli("fix", "--staged").returncode, 0)
+        new_text = (self.tmp / "a.py").read_text()
+        line = [x for x in new_text.splitlines() if "updated_date" in x][0]
+        self.assertRegex(line, rf"^# updated_date: '{TODAY} \d\d:\d\d'  # 커밋 때 자동$")
+        self.assertEqual(new_text.replace(line, ""), text.replace(
+            "# updated_date: '2026-10-02 08:00'  # 커밋 때 자동", ""))
+
+
 # == Coverage ==
 
 

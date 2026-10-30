@@ -875,6 +875,77 @@ def cmd_init(args) -> int:
     return 0
 
 
+# --- fix ---
+
+
+def body_of(text: str, path) -> str:
+    """헤더 줄을 뺀 나머지. updated_date 갱신 여부는 헤더가 아니라 이 본문이 바뀌었는지로 정한다."""
+    header = extract_header(text, path)
+    if header is None:
+        return text
+    lines = text.split("\n")
+    return "\n".join(lines[:header.start - 1] + lines[header.end:])
+
+
+def set_field(text: str, path, key: str, value) -> str:
+    """헤더의 필드 한 줄만 바꾼다. 다시 render하지 않으므로 다른 줄과 줄 끝 설명 주석이 그대로 남는다."""
+    header = extract_header(text, path)
+    if header is None:
+        return text
+    lines = text.split("\n")
+    rendered = f"{key}: {render_value(value)}"
+    if key in header.lines:
+        i = header.lines[key] - 1
+        inner = _unprefix(lines[i], header.prefix) or ""
+        comment = inner[len(strip_yaml_comment(inner)):]
+        lines[i] = (f"{header.prefix} " if header.prefix else "") + rendered + comment
+    else:
+        lines.insert(header.end - 1, (f"{header.prefix} " if header.prefix else "") + rendered)
+    return "\n".join(lines)
+
+
+def stamp_like(old) -> str:
+    """오늘 날짜를 기존 값과 같은 형식으로(HH:MM이 있었으면 지금 시각까지)."""
+    if isinstance(old, str) and parse_date(old) and " " in old:
+        return datetime.now().strftime("%Y-%m-%d %H:%M")
+    return today()
+
+
+def cmd_fix(args) -> int:
+    """staged 파일의 updated_date를 맞추고 다시 stage한다(B8). 일부만 staged면 손대지 않는다(B9).
+
+    부분 staged 파일을 고쳐 git add하면 stage하지 않은 변경까지 커밋에 섞이므로, 오류로 멈추고
+    사람이 정리하게 한다."""
+    if not args.staged:
+        print("source-header: fix needs --staged", file=sys.stderr)
+        return 2
+    ws = Workspace.load()
+    status = 0
+    for rel in staged_paths(ws):
+        if not ws.selected(rel):
+            continue
+        staged = git(["show", f":{rel}"], ws.root)
+        header = extract_header(staged or "", rel)
+        if header is None:
+            continue  # 헤더가 없는 파일은 lint가 H001로 잡는다
+        if git(["diff", "--name-only", "--", rel], ws.root):
+            print(Finding(ws.display(rel), 1, "error", "B9",
+                          "partially staged; stage or stash the rest, then run fix again").format())
+            status = 1
+            continue
+        head = git(["show", f"HEAD:{rel}"], ws.root)
+        if head is not None and body_of(head, rel) == body_of(staged, rel):
+            continue
+        old = header.fields.get("updated_date")
+        if isinstance(old, str) and old[:10] == today():
+            continue
+        new = stamp_like(old)
+        (ws.root / rel).write_text(set_field(staged, rel, "updated_date", new), encoding="utf-8")
+        git(["add", "--", rel], ws.root)
+        print(f"{ws.display(rel)}: updated_date {old} -> {new}")
+    return status
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="source-header", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -888,6 +959,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("paths", nargs="*", help="파일·디렉터리(재귀). 기본은 현재 디렉터리")
     p.add_argument("--license", help="저장소 LICENSE 대신 쓸 SPDX 식")
     p.set_defaults(func=cmd_init)
+    p = sub.add_parser("fix", help="staged 파일의 updated_date를 고치고 다시 stage")
+    p.add_argument("--staged", action="store_true", help="stage된 파일을 대상으로(필수)")
+    p.set_defaults(func=cmd_fix)
     return parser
 
 
