@@ -34,3 +34,21 @@ dependencies: []
 - [ ] #2 ~/githubs/bin/source-header 심볼릭 링크가 있고 PATH에서 source-header --help가 동작한다
 - [ ] #3 LICENSE(AGPL-3.0 전문)와 README 라이선스 절이 있고, source-header lint .에서 L2 경고가 없다
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+### Subjective
+유저가 2단계 진행, LICENSE 추가를 승인했다(2026-10-31). git 훅 연결은 git-commit-tool DRAFT-22가 맡는다.
+
+### Objective
+TASK-1로 lint·fix·--staged가 이미 있다. ~/githubs/bin의 다른 항목은 모두 상대 경로 심볼릭 링크다. claude-code-agile-hooks에 AGPL-3.0 LICENSE 전문이 있다.
+
+### Assessment
+진입점은 기존 cmd_fix·cmd_lint를 차례로 부르는 얇은 서브커맨드로 둔다. 로직을 새로 만들지 않는다.
+
+### Plan
+1. 테스트(TASK-<ID>#1, #B1, #B2) → hook 서브커맨드 → 커밋
+2. bin 링크 생성 → 확인 → 커밋은 없음(bin은 git 밖) — 결과는 Implementation Notes에 기록
+3. LICENSE 복사 + README 절 → 자기 lint L2 경고 0 → 커밋
+<!-- SECTION:PLAN:END -->

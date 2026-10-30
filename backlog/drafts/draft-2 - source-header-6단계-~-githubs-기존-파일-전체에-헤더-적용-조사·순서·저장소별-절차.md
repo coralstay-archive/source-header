@@ -40,3 +40,22 @@ dependencies: []
 - [ ] #3 적용 순서표(바로 가능한 저장소 → 작업 끝난 뒤 할 저장소)를 work-order에 반영하고, 저장소마다 후속 카드를 만든다
 - [ ] #4 .mailmap 기반 authors 정규화를 source-header init에 반영한다(테스트 포함)
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+### Subjective
+유저 결정(2026-10-31): ~/githubs 기존 파일 전체 적용. freeride는 내가 짠 코드만, description은 에이전트 초안, README 제외·설계 문서 포함, MIT 저장소는 AGPL로 전환.
+
+### Objective
+조사 결과는 Description 참고. 저장소 16개(외부 클론 제외), 그중 5개는 작업 중이다. dev-toolchain에 외부 이메일 작성자가 있다.
+
+### Assessment
+규모가 커서 이 카드는 조사·순서·공통 기능(.mailmap)까지만 한다. 실제 적용은 저장소별 후속 카드로 나눠 하나씩 검토 가능하게 한다.
+
+### Plan
+1. freeride 책 예제 구분 규칙 조사(서브에이전트) → 표로 유저 승인
+2. dev-toolchain 외부 작성자 커밋 확인 → 보고
+3. .mailmap 정규화를 init에 추가(테스트 먼저)
+4. 순서표 + 저장소별 후속 draft 생성
+<!-- SECTION:PLAN:END -->
