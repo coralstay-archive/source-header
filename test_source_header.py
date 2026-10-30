@@ -369,6 +369,83 @@ class TestLintLifecycle(TempDirCase):
         self.assertEqual(codes(self.lint(fields_with(updated_date="2026-13-01"))), ["D001"])
 
 
+LICENSE_TEXTS = {
+    "AGPL-3.0-only": "                    GNU AFFERO GENERAL PUBLIC LICENSE\n"
+                     "                       Version 3, 19 November 2007\n",
+    "GPL-3.0-only": "                    GNU GENERAL PUBLIC LICENSE\n"
+                    "                       Version 3, 29 June 2007\n",
+    "MIT": "MIT License\n\nCopyright (c) 2026 coralstay\n\n"
+           "Permission is hereby granted, free of charge, to any person obtaining a copy\n",
+    "Apache-2.0": "\n                                 Apache License\n"
+                  "                           Version 2.0, January 2004\n",
+    "BSD-3-Clause": "Copyright (c) 2026\n\nRedistribution and use in source and binary forms, "
+                    "with or without\nmodification, are permitted provided that ...\n"
+                    "3. Neither the name of the copyright holder nor the names of its\n",
+}
+
+
+class TestLintLicense(TempDirCase):
+    """TASK-1#4 라이선스 규칙"""
+
+    def test_spdx_expression(self) -> None:
+        """TASK-1#4 TASK-1#B5 license는 SPDX 식별자 또는 AND/OR/WITH 식이어야 한다"""
+        for good in ("MIT", "AGPL-3.0-only", "(MIT OR Apache-2.0)", "Apache-2.0 AND MIT",
+                     "GPL-2.0-or-later WITH Classpath-exception-2.0", "LicenseRef-Proprietary",
+                     "mit", "MIT AND (BSD-3-Clause OR Apache-2.0)", "GPL-2.0+"):
+            with self.subTest(good=good):
+                self.assertTrue(sh.valid_spdx(good))
+                self.assertEqual(self.lint(fields_with(license=good)), [])
+        for bad in ("MIT License", "GPL", "MIT OR", "MIT WITH Apache-2.0", "(MIT",
+                    "Foo-1.0", "MIT Apache-2.0", "AND MIT"):
+            with self.subTest(bad=bad):
+                self.assertFalse(sh.valid_spdx(bad))
+                self.assertEqual(codes(self.lint(fields_with(license=bad))), ["B5"])
+
+    def test_spdx_identifier_line(self) -> None:
+        """TASK-1#4 SPDX-License-Identifier 줄(헤더 필드 또는 머리 주석)은 license와 같아야 한다"""
+        ctx = sh.LintContext(path="a.py", root=self.tmp)
+        same = py_file(fields_with(), "# SPDX-License-Identifier: AGPL-3.0-only\nx = 1\n")
+        self.assertEqual(sh.lint_text(same, "a.py", ctx), [])
+        other = py_file(fields_with(), "# SPDX-License-Identifier: MIT\nx = 1\n")
+        found = sh.lint_text(other, "a.py", sh.LintContext(path="a.py", root=self.tmp))
+        self.assertEqual([(f.code, f.level, f.line) for f in found], [("L1", "error", 11)])
+        as_field = fields_with(**{"SPDX-License-Identifier": "MIT"})
+        self.assertEqual(codes(self.lint(as_field)), ["L1"])
+        as_field_ok = fields_with(**{"SPDX-License-Identifier": "AGPL-3.0-only"})
+        self.assertEqual(self.lint(as_field_ok), [])  # 알려진 키라 F002도 아니다
+
+    def test_repo_license_detection(self) -> None:
+        """TASK-1#4 저장소 LICENSE 첫머리에서 SPDX 식별자를 감지한다"""
+        self.assertIsNone(sh.repo_license(self.tmp))
+        for spdx, text in LICENSE_TEXTS.items():
+            with self.subTest(spdx=spdx):
+                self.write("LICENSE", text)
+                self.assertEqual(sh.repo_license(self.tmp), spdx)
+
+    def test_differs_from_repo_license_warns(self) -> None:
+        """TASK-1#4 저장소 기본 라이선스와 다르면 경고(L2), 같은 계열(-only/-or-later)이나 식에 들어 있으면 통과"""
+        found = self.lint(fields_with(license="MIT"), default_license="AGPL-3.0-only")
+        self.assertEqual([(f.code, f.level) for f in found], [("L2", "warning")])
+        for ok in ("AGPL-3.0-only", "AGPL-3.0-or-later", "MIT OR AGPL-3.0-only"):
+            with self.subTest(ok=ok):
+                self.assertEqual(self.lint(fields_with(license=ok), default_license="AGPL-3.0-only"), [])
+        self.write("LICENSE", LICENSE_TEXTS["MIT"])
+        self.write("a.py", py_file(CANONICAL_FIELDS))
+        res = run_cli(["lint", "a.py"], self.tmp)
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("(L2)", res.stdout)
+
+    def test_upstream_needs_third_party_notice(self) -> None:
+        """TASK-1#4 TASK-1#B6 upstream이 있는 파일은 THIRD_PARTY_NOTICES.md에 그 출처가 있어야 한다"""
+        url = "https://github.com/karanb192/claude-code-hooks"
+        found = self.lint(fields_with(upstream=url))
+        self.assertEqual(codes(found), ["B6"])
+        self.write("THIRD_PARTY_NOTICES.md", "# Notices\n\n- other (MIT)\n")
+        self.assertEqual(codes(self.lint(fields_with(upstream=url))), ["B6"])
+        self.write("THIRD_PARTY_NOTICES.md", f"# Notices\n\n- {url} (MIT)\n")
+        self.assertEqual(self.lint(fields_with(upstream=url)), [])
+
+
 # == Coverage ==
 
 

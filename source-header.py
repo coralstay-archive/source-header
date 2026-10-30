@@ -48,10 +48,12 @@ COMMENT_PREFIX = {
     ".md": "",
 }
 
+# REUSE 관례의 라이선스 줄. 헤더 필드로 써도, 머리 주석에 따로 써도 된다.
+SPDX_KEY = "SPDX-License-Identifier"
 REQUIRED = ("title", "description", "authors", "license", "status", "created_date",
             "updated_date")
 OPTIONAL = ("task", "reviewers", "reviewed_date", "published_date", "deprecated_date",
-            "superseded_by", "labels", "version", "upstream")
+            "superseded_by", "labels", "version", "upstream", SPDX_KEY)
 # render가 쓰는 고정 순서. 사람이 쓰는 필드 → 상태 → git 유도 날짜 → 수명 주기 날짜.
 FIELD_ORDER = ("title", "description", "authors", "reviewers", "license", "status", "task",
                "labels", "version", "upstream", "superseded_by", "created_date",
@@ -280,6 +282,7 @@ class LintContext:
     strict: bool = False
     default_license: str | None = None
     header: Header | None = None
+    text: str = ""
 
 
 def parse_date(value):
@@ -402,8 +405,188 @@ def rule_date_order(fields, ctx):
     ]
 
 
+# --- 라이선스 ---
+
+# 오프라인에서 쓰는 SPDX 목록의 일부(흔히 쓰는 것). 여기 없는 것은 LicenseRef-로 쓴다.
+SPDX_IDS = {i.lower(): i for i in """
+0BSD AFL-3.0 AGPL-1.0-only AGPL-1.0-or-later AGPL-3.0-only AGPL-3.0-or-later Apache-1.1
+Apache-2.0 Artistic-2.0 BlueOak-1.0.0 BSD-1-Clause BSD-2-Clause BSD-2-Clause-Patent
+BSD-3-Clause BSD-3-Clause-Clear BSD-4-Clause BSL-1.0 CC-BY-4.0 CC-BY-SA-4.0 CC-BY-NC-4.0
+CC-BY-NC-SA-4.0 CC-BY-ND-4.0 CC0-1.0 CDDL-1.0 CDDL-1.1 CECILL-2.1 EPL-1.0 EPL-2.0 EUPL-1.2
+GFDL-1.3-only GFDL-1.3-or-later GPL-2.0-only GPL-2.0-or-later GPL-3.0-only GPL-3.0-or-later
+ISC LGPL-2.0-only LGPL-2.0-or-later LGPL-2.1-only LGPL-2.1-or-later LGPL-3.0-only
+LGPL-3.0-or-later LPPL-1.3c MIT MIT-0 MPL-1.1 MPL-2.0 MPL-2.0-no-copyleft-exception MS-PL
+MS-RL MulanPSL-2.0 NCSA ODbL-1.0 OFL-1.1 OpenSSL OSL-3.0 PostgreSQL PSF-2.0 Python-2.0
+Ruby SSPL-1.0 Unicode-3.0 Unicode-DFS-2016 Unlicense UPL-1.0 Vim W3C WTFPL X11 Zlib ZPL-2.1
+GPL-2.0 GPL-3.0 LGPL-2.1 LGPL-3.0 AGPL-3.0
+""".split()}
+SPDX_EXCEPTIONS = {e.lower() for e in """
+Autoconf-exception-3.0 Bison-exception-2.2 Classpath-exception-2.0 GCC-exception-2.0
+GCC-exception-3.1 LLVM-exception OpenJDK-assembly-exception-1.0 Qt-GPL-exception-1.0
+Qt-LGPL-exception-1.1 Font-exception-2.0 Linux-syscall-note openvpn-openssl-exception
+""".split()}
+SPDX_TOKEN_RE = re.compile(r"\(|\)|[A-Za-z0-9.+:-]+")
+LICENSE_REF_RE = re.compile(r"^(DocumentRef-[A-Za-z0-9.-]+:)?LicenseRef-[A-Za-z0-9.-]+$")
+
+
+def valid_spdx(expr: str) -> bool:
+    """SPDX 라이선스 식인지. 문법: expr := and (OR and)*, and := atom (AND atom)*,
+    atom := '(' expr ')' | id['+'] [WITH exception]. 연산자는 대소문자를 가리지 않는다."""
+    if not isinstance(expr, str) or SPDX_TOKEN_RE.sub("", expr).strip():
+        return False
+    tokens = SPDX_TOKEN_RE.findall(expr)
+    pos = 0
+
+    def peek():
+        return tokens[pos] if pos < len(tokens) else None
+
+    def take():
+        nonlocal pos
+        pos += 1
+        return tokens[pos - 1]
+
+    def atom() -> bool:
+        tok = peek()
+        if tok is None:
+            return False
+        if tok == "(":
+            take()
+            if not or_expr() or peek() != ")":
+                return False
+            take()
+            return True
+        if tok.upper() in ("AND", "OR", "WITH") or tok == ")":
+            return False
+        take()
+        ident = tok[:-1] if tok.endswith("+") else tok
+        if ident.lower() not in SPDX_IDS and not LICENSE_REF_RE.match(ident):
+            return False
+        if (peek() or "").upper() == "WITH":
+            take()
+            exc = peek()
+            if exc is None or exc.lower() not in SPDX_EXCEPTIONS:
+                return False
+            take()
+        return True
+
+    def and_expr() -> bool:
+        if not atom():
+            return False
+        while (peek() or "").upper() == "AND":
+            take()
+            if not atom():
+                return False
+        return True
+
+    def or_expr() -> bool:
+        if not and_expr():
+            return False
+        while (peek() or "").upper() == "OR":
+            take()
+            if not and_expr():
+                return False
+        return True
+
+    return or_expr() and pos == len(tokens)
+
+
+def spdx_ids(expr: str) -> set[str]:
+    """식에 든 라이선스 계열 이름(-only/-or-later/+를 뗀 소문자). 같은 계열인지 비교하는 데 쓴다."""
+    out = set()
+    for tok in SPDX_TOKEN_RE.findall(expr or ""):
+        if tok in "()" or tok.upper() in ("AND", "OR", "WITH"):
+            continue
+        out.add(re.sub(r"(-only|-or-later|\+)$", "", tok.lower()))
+    return out
+
+
+# (감지할 SPDX, 첫머리에 모두 있어야 하는 문구). 위에서부터 먼저 맞는 것을 쓴다.
+LICENSE_SIGNATURES = (
+    ("AGPL-3.0-only", ("gnu affero general public license", "version 3")),
+    ("LGPL-3.0-only", ("gnu lesser general public license", "version 3")),
+    ("LGPL-2.1-only", ("gnu lesser general public license", "version 2.1")),
+    ("GPL-3.0-only", ("gnu general public license", "version 3")),
+    ("GPL-2.0-only", ("gnu general public license", "version 2")),
+    ("Apache-2.0", ("apache license", "version 2.0")),
+    ("MPL-2.0", ("mozilla public license", "2.0")),
+    ("BSD-3-Clause", ("redistribution and use in source and binary forms", "neither the name")),
+    ("BSD-2-Clause", ("redistribution and use in source and binary forms",)),
+    ("MIT", ("permission is hereby granted, free of charge",)),
+    ("ISC", ("permission to use, copy, modify, and/or distribute this software",)),
+    ("Unlicense", ("this is free and unencumbered software",)),
+)
+
+
+def repo_license(root: Path) -> str | None:
+    """저장소 LICENSE 파일 첫머리에서 기본 라이선스(SPDX)를 감지한다. 파일이 없거나 모르면 None.
+
+    -only/-or-later는 본문으로 구분할 수 없어 -only로 본다(L2는 계열만 비교하므로 무관)."""
+    for name in ("LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING"):
+        path = Path(root) / name
+        if not path.is_file():
+            continue
+        head = "\n".join(path.read_text(encoding="utf-8", errors="replace").splitlines()[:40])
+        m = re.search(SPDX_KEY + r":\s*(\S+)", head)
+        if m:
+            return m.group(1)
+        lowered = " ".join(head.lower().split())
+        for spdx, needles in LICENSE_SIGNATURES:
+            if all(n in lowered for n in needles):
+                return spdx
+        return None
+    return None
+
+
+SPDX_LINE_RE = re.compile(SPDX_KEY + r":\s*['\"]?(.+?)['\"]?\s*(\*/|-->)?\s*$")
+
+
+def leading_comment(text: str, header: Header):
+    """(줄 번호, 줄) - 파일 머리부터 헤더 뒤에 이어지는 주석 블록 끝까지.
+
+    SPDX 줄은 이 범위에서만 찾는다. 본문이나 문서 예시 속 문자열을 잘못 잡지 않기 위해서다."""
+    lines = text.split("\n")
+    end = header.end
+    lead = header.prefix or "<!--"
+    while end < len(lines) and lines[end].startswith(lead):
+        end += 1
+    return list(enumerate(lines[:end], start=1))
+
+
+def rule_license(fields, ctx):
+    """B5 SPDX 식, L1 SPDX-License-Identifier 줄과 license 불일치, L2 저장소 LICENSE와 다른 계열."""
+    lic = fields.get("license")
+    if not isinstance(lic, str) or lic == "":
+        return []
+    out = []
+    if not valid_spdx(lic):
+        out.append(_finding(ctx, "license", "error", "B5",
+                            f"license '{lic}' is not an SPDX identifier or expression"))
+    for lineno, line in leading_comment(ctx.text, ctx.header):
+        m = SPDX_LINE_RE.search(line)
+        if m and m.group(1) != lic:
+            out.append(Finding(ctx.path, lineno, "error", "L1",
+                               f"{SPDX_KEY} '{m.group(1)}' differs from license '{lic}'"))
+    if ctx.default_license and not (spdx_ids(ctx.default_license) & spdx_ids(lic)):
+        out.append(_finding(ctx, "license", "warning", "L2",
+                            f"license '{lic}' differs from repository LICENSE ({ctx.default_license})"))
+    return out
+
+
+def rule_upstream(fields, ctx):
+    """B6 외부에서 가져온 파일(upstream)은 THIRD_PARTY_NOTICES.md에 출처가 적혀 있어야 한다."""
+    upstream = fields.get("upstream")
+    if not isinstance(upstream, str) or not upstream:
+        return []
+    notices = Path(ctx.root) / "THIRD_PARTY_NOTICES.md"
+    text = notices.read_text(encoding="utf-8", errors="replace") if notices.is_file() else ""
+    if upstream in text:
+        return []
+    return [_finding(ctx, "upstream", "error", "B6",
+                     f"upstream '{upstream}' is not listed in THIRD_PARTY_NOTICES.md")]
+
+
 RULES = [rule_required, rule_unknown, rule_types, rule_status, rule_dates, rule_lifecycle,
-         rule_date_order]
+         rule_date_order, rule_license, rule_upstream]
 
 
 def lint_text(text: str, path: str, ctx: LintContext) -> list[Finding]:
@@ -418,6 +601,7 @@ def lint_text(text: str, path: str, ctx: LintContext) -> list[Finding]:
             return [Finding(path, i + 1, "error", "H002", "header block is not closed")]
         return [Finding(path, 1, "error", "H001", "source header is missing")]
     ctx.header = header
+    ctx.text = text
     out = []
     for rule in RULES:
         out.extend(rule(header.fields, ctx))
@@ -455,12 +639,14 @@ def iter_files(paths: list[str]):
 def cmd_lint(args) -> int:
     cwd = Path.cwd()
     root = repo_root(cwd)
+    default_license = repo_license(root)
     findings: list[Finding] = []
     for path in iter_files(args.paths or ["."]):
         if prefix_for(path) is None:
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
-        ctx = LintContext(path=str(path), root=root, strict=args.strict)
+        ctx = LintContext(path=str(path), root=root, strict=args.strict,
+                          default_license=default_license)
         findings.extend(lint_text(text, str(path), ctx))
     for f in findings:
         print(f.format())
