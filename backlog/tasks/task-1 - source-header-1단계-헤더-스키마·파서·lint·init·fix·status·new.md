@@ -1,10 +1,10 @@
 ---
 id: TASK-1
 title: 'source-header 1단계: 헤더 스키마·파서·lint·init·fix·status·new'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-10-30T18:57:00Z'
-updated_date: '2026-10-30T18:59:00Z'
+updated_date: '2026-10-30T19:05:00Z'
 labels:
   - tool
   - ssot
