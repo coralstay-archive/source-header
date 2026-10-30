@@ -53,6 +53,53 @@ def commented(block: str, prefix: str) -> str:
     return "".join(f"{prefix} {line}".rstrip() + "\n" for line in block.splitlines())
 
 
+def py_file(fields: dict, body: str = "print(1)\n") -> str:
+    return sh.render_header(fields, "#") + body
+
+
+def fields_with(**changes) -> dict:
+    """CANONICAL_FIELDS에서 값을 바꾸거나(None이면 지운다) 더한 사본."""
+    out = dict(CANONICAL_FIELDS)
+    for key, value in changes.items():
+        if value is None:
+            out.pop(key, None)
+        else:
+            out[key] = value
+    return out
+
+
+def run_cli(args: list[str], cwd) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, str(MODULE_PATH), *args],
+        cwd=cwd, capture_output=True, text=True, check=False,
+    )
+
+
+def codes(findings) -> list[str]:
+    return [f.code for f in findings]
+
+
+class TempDirCase(unittest.TestCase):
+    """임시 디렉터리 하나를 쓰는 테스트 기반 클래스."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def write(self, rel: str, text: str) -> Path:
+        path = self.tmp / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def lint(self, fields: dict, strict: bool = False, **ctx) -> list:
+        context = sh.LintContext(path="a.py", root=self.tmp, strict=strict, **ctx)
+        return sh.lint_text(py_file(fields), "a.py", context)
+
+
 def load_work_order():
     ws = importlib.util.spec_from_file_location("work_order_ref", WORK_ORDER)
     assert ws is not None and ws.loader is not None
@@ -187,6 +234,84 @@ class TestExtractRender(unittest.TestCase):
         )
         header = sh.extract_header(text, "a.py")
         self.assertEqual(header.fields, {"title": "demo", "upstream": "a #b"})
+
+
+class TestLintFormat(TempDirCase):
+    """TASK-1#2 lint 형식 규칙과 출력 형식"""
+
+    def test_valid_header_has_no_findings(self) -> None:
+        """TASK-1#2 올바른 헤더는 아무것도 보고하지 않는다"""
+        self.assertEqual(self.lint(CANONICAL_FIELDS), [])
+
+    def test_missing_required_field(self) -> None:
+        """TASK-1#2 필수 필드 누락은 오류(F001)이고 헤더 시작 줄을 가리킨다"""
+        for key in sh.REQUIRED:
+            with self.subTest(key=key):
+                found = self.lint(fields_with(**{key: None}))
+                self.assertIn("F001", codes(found))
+                miss = [f for f in found if f.code == "F001"][0]
+                self.assertEqual((miss.level, miss.line), ("error", 1))
+                self.assertIn(key, miss.message)
+
+    def test_no_header(self) -> None:
+        """TASK-1#2 헤더가 없으면 H001, 닫히지 않았으면 H002"""
+        ctx = sh.LintContext(path="a.py", root=self.tmp)
+        self.assertEqual(codes(sh.lint_text("print(1)\n", "a.py", ctx)), ["H001"])
+        self.assertEqual(codes(sh.lint_text("# ---\n# title: a\nx = 1\n", "a.py", ctx)), ["H002"])
+
+    def test_status_enum(self) -> None:
+        """TASK-1#2 status는 draft·review·published·deprecated·archived 중 하나(S001)"""
+        found = self.lint(fields_with(status="done"))
+        self.assertEqual(codes(found), ["S001"])
+        self.assertEqual(found[0].line, 6)
+        self.assertEqual(found[0].level, "error")
+
+    def test_date_format_and_real_date(self) -> None:
+        """TASK-1#2 날짜는 YYYY-MM-DD 또는 YYYY-MM-DD HH:MM이고 실존해야 한다(D001)"""
+        for bad in ("2026/10/31", "2026-02-30", "2026-10-31 25:00", "31-10-2026", "2026-10-31T09:00"):
+            with self.subTest(bad=bad):
+                self.assertIn("D001", codes(self.lint(fields_with(updated_date=bad))))
+        for good in ("2026-10-31", "2026-10-31 09:30", "2024-02-29"):
+            with self.subTest(good=good):
+                self.assertEqual(self.lint(fields_with(updated_date=good)), [])
+
+    def test_list_field_types(self) -> None:
+        """TASK-1#2 authors·reviewers·labels는 리스트(F003), 나머지는 스칼라(F004)"""
+        self.assertEqual(codes(self.lint(fields_with(authors="coralstay"))), ["F003"])
+        self.assertEqual(codes(self.lint(fields_with(labels="tool"))), ["F003"])
+        self.assertEqual(codes(self.lint(fields_with(title=["a"]))), ["F004"])
+
+    def test_empty_values(self) -> None:
+        """TASK-1#2 빈 필수 값은 오류(F005), 단 description은 init이 비워 두므로 경고"""
+        self.assertEqual(codes(self.lint(fields_with(title=""))), ["F005"])
+        self.assertEqual(codes(self.lint(fields_with(authors=[]))), ["F005"])
+        found = self.lint(fields_with(description=""))
+        self.assertEqual([(f.code, f.level) for f in found], [("F005", "warning")])
+
+    def test_unknown_field_warning_or_strict_error(self) -> None:
+        """TASK-1#2 모르는 필드는 경고, --strict면 오류(F002)"""
+        found = self.lint(fields_with(owner="x"))
+        self.assertEqual([(f.code, f.level) for f in found], [("F002", "warning")])
+        found = self.lint(fields_with(owner="x"), strict=True)
+        self.assertEqual([(f.code, f.level) for f in found], [("F002", "error")])
+
+    def test_finding_format(self) -> None:
+        """TASK-1#2 출력은 path:line: level: message (code)"""
+        f = sh.Finding("a.py", 6, "error", "S001", "bad status")
+        self.assertEqual(f.format(), "a.py:6: error: bad status (S001)")
+
+    def test_cli_exit_codes(self) -> None:
+        """TASK-1#2 CLI: 오류가 있으면 exit 1, 경고만 있으면 exit 0, --strict면 모르는 필드도 exit 1"""
+        self.write("ok.py", py_file(CANONICAL_FIELDS))
+        self.write("warn.py", py_file(fields_with(owner="x")))
+        res = run_cli(["lint", "ok.py", "warn.py"], self.tmp)
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertRegex(res.stdout, r"^warn\.py:\d+: warning: .* \(F002\)$")
+        self.assertEqual(run_cli(["lint", "--strict", "warn.py"], self.tmp).returncode, 1)
+        self.write("bad.py", py_file(fields_with(status="nope")))
+        res = run_cli(["lint", "bad.py"], self.tmp)
+        self.assertEqual(res.returncode, 1)
+        self.assertIn("bad.py:6: error:", res.stdout)
 
 
 # == Coverage ==

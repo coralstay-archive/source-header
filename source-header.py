@@ -26,9 +26,13 @@
 # - 규칙은 (fields, ctx) -> [Finding] 함수 목록(RULES)이라 단계마다 덧붙이기 쉽다.
 from __future__ import annotations
 
+import argparse
 import re
+import subprocess
+import sys
 from dataclasses import dataclass, field
-from pathlib import PurePath
+from datetime import datetime
+from pathlib import Path, PurePath
 
 # --- 헤더 스키마 ---
 
@@ -247,3 +251,192 @@ def render_header(fields: dict, prefix: str) -> str:
     if not prefix:
         return "\n".join(lines) + "\n"
     return "".join(f"{prefix} {line}\n" for line in lines)
+
+
+# --- lint 규칙 ---
+
+
+@dataclass
+class Finding:
+    """규칙 위반 하나. code는 문서·억제에 쓰는 안정된 식별자다(README 규칙 표 참고)."""
+
+    path: str
+    line: int
+    level: str  # "error" | "warning"
+    code: str
+    message: str
+
+    def format(self) -> str:
+        # 편집기·CI가 바로 점프할 수 있는 컴파일러식 형식
+        return f"{self.path}:{self.line}: {self.level}: {self.message} ({self.code})"
+
+
+@dataclass
+class LintContext:
+    """규칙이 필드 밖에서 알아야 하는 것: 파일 위치, 저장소 루트, 옵션, 저장소 기본값."""
+
+    path: str
+    root: Path
+    strict: bool = False
+    default_license: str | None = None
+    header: Header | None = None
+
+
+def parse_date(value):
+    """헤더 날짜를 datetime으로. 형식이 틀리거나 실존하지 않는 날짜면 None."""
+    if not isinstance(value, str) or not DATE_RE.match(value):
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d %H:%M" if " " in value else "%Y-%m-%d")
+    except ValueError:
+        return None
+
+
+def _line(ctx: LintContext, key: str | None = None) -> int:
+    """필드가 적힌 줄. 필드가 없으면(누락 등) 헤더 시작 줄."""
+    header = ctx.header
+    if header is None:
+        return 1
+    return header.lines.get(key, header.start) if key else header.start
+
+
+def _finding(ctx, key, level, code, message) -> Finding:
+    return Finding(ctx.path, _line(ctx, key), level, code, message)
+
+
+def rule_required(fields, ctx):
+    """F001 필수 필드 누락, F005 빈 필수 값(description만 경고: init이 일부러 비워 둔다)."""
+    out = []
+    for key in REQUIRED:
+        if key not in fields:
+            out.append(_finding(ctx, None, "error", "F001", f"required field '{key}' is missing"))
+        elif fields[key] in ("", []):
+            level = "warning" if key == "description" else "error"
+            out.append(_finding(ctx, key, level, "F005", f"field '{key}' is empty"))
+    return out
+
+
+def rule_unknown(fields, ctx):
+    """F002 모르는 필드. 오타를 잡으려는 것이라 기본은 경고, --strict면 오류."""
+    level = "error" if ctx.strict else "warning"
+    return [
+        _finding(ctx, key, level, "F002", f"unknown field '{key}'")
+        for key in fields
+        if key not in REQUIRED and key not in OPTIONAL
+    ]
+
+
+def rule_types(fields, ctx):
+    """F003 리스트여야 하는 필드가 스칼라, F004 스칼라여야 하는 필드가 리스트."""
+    out = []
+    for key, value in fields.items():
+        if key in LIST_FIELDS and not isinstance(value, list) and value != "":
+            out.append(_finding(ctx, key, "error", "F003", f"field '{key}' must be a list"))
+        elif key not in LIST_FIELDS and (key in REQUIRED or key in OPTIONAL) and isinstance(value, list):
+            out.append(_finding(ctx, key, "error", "F004", f"field '{key}' must be a scalar"))
+    return out
+
+
+def rule_status(fields, ctx):
+    """S001 status 값이 정해진 다섯 가지가 아님."""
+    status = fields.get("status")
+    if status in (None, "") or status in STATUSES:
+        return []
+    return [_finding(ctx, "status", "error", "S001",
+                     f"status '{status}' is not one of {', '.join(STATUSES)}")]
+
+
+def rule_dates(fields, ctx):
+    """D001 날짜 형식(YYYY-MM-DD 또는 YYYY-MM-DD HH:MM)·실존 날짜."""
+    out = []
+    for key in DATE_FIELDS:
+        value = fields.get(key)
+        if value in (None, "") or isinstance(value, list):
+            continue
+        if parse_date(value) is None:
+            out.append(_finding(ctx, key, "error", "D001",
+                                f"'{key}' must be a real date as YYYY-MM-DD or YYYY-MM-DD HH:MM"))
+    return out
+
+
+RULES = [rule_required, rule_unknown, rule_types, rule_status, rule_dates]
+
+
+def lint_text(text: str, path: str, ctx: LintContext) -> list[Finding]:
+    """파일 텍스트 하나에 RULES를 모두 적용한다. 헤더가 없으면 H001/H002 하나만 보고한다."""
+    header = extract_header(text, path)
+    if header is None:
+        prefix = prefix_for(path) or ""
+        lines = text.split("\n")
+        i = header_start(lines, prefix)
+        opened = i < len(lines) and (_unprefix(lines[i], prefix) or "").strip() == "---"
+        if opened:
+            return [Finding(path, i + 1, "error", "H002", "header block is not closed")]
+        return [Finding(path, 1, "error", "H001", "source header is missing")]
+    ctx.header = header
+    out = []
+    for rule in RULES:
+        out.extend(rule(header.fields, ctx))
+    return out
+
+
+# --- CLI ---
+
+
+def repo_root(cwd: Path) -> Path:
+    """cwd가 속한 git 저장소의 최상위. git 저장소가 아니면 cwd 자체."""
+    out = git(["rev-parse", "--show-toplevel"], cwd)
+    return Path(out.strip()) if out else cwd
+
+
+def git(args: list[str], cwd: Path) -> str | None:
+    """git 명령 출력. 실패(저장소 아님, 파일 없음 등)하면 None."""
+    try:
+        res = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=False)
+    except FileNotFoundError:
+        return None
+    return res.stdout if res.returncode == 0 else None
+
+
+def iter_files(paths: list[str]):
+    """경로 인자를 파일 목록으로. 디렉터리는 재귀로 펼친다."""
+    for raw in paths:
+        p = Path(raw)
+        if p.is_dir():
+            yield from sorted(q for q in p.rglob("*") if q.is_file())
+        elif p.is_file():
+            yield p
+
+
+def cmd_lint(args) -> int:
+    cwd = Path.cwd()
+    root = repo_root(cwd)
+    findings: list[Finding] = []
+    for path in iter_files(args.paths or ["."]):
+        if prefix_for(path) is None:
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        ctx = LintContext(path=str(path), root=root, strict=args.strict)
+        findings.extend(lint_text(text, str(path), ctx))
+    for f in findings:
+        print(f.format())
+    return 1 if any(f.level == "error" for f in findings) else 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="source-header", description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+    p = sub.add_parser("lint", help="헤더 규칙 검사")
+    p.add_argument("paths", nargs="*")
+    p.add_argument("--strict", action="store_true", help="모르는 필드도 오류로")
+    p.set_defaults(func=cmd_lint)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
