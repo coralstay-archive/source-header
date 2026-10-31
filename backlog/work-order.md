@@ -1,4 +1,4 @@
-<!-- work-order-hash: aa692a717d097e6462720070a6067a5cf8a7523b0e78029b0cb4ed008ddf9376 -->
+<!-- work-order-hash: 488215660acc7c2c5605af948e2b909b2a4b52b7929be6a35c585d3b0f7b94cc -->
 # 작업 순서
 
 `work_order.py`가 backlog/tasks의 의존(`dependencies`)으로 만든 파일이다 — 직접 고치지 말고 다시 생성한다. 같은 단계의 태스크는 병렬로, 단계는 위에서 아래로 순차로 진행한다. Done 태스크와 없는 태스크에 대한 의존은 충족된 것으로 본다.
@@ -16,3 +16,4 @@
 | 1 | TASK-12 | source-header 적용: coralstay-software-factory/components/agent-orchestrator |
 | 1 | TASK-13 | source-header 적용: coralstay-software-factory/components/claude-code-agile-hooks |
 | 1 | TASK-14 | source-header 적용: dev-tools/ebpf-wire-to-code-tracer |
+| 1 | TASK-15 | source-header 적용: freeride/doctree |
