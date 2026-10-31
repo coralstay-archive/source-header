@@ -4,11 +4,12 @@ title: 'source-header 적용: freeride/coding-style-refactoring-principles'
 status: To Do
 assignee: []
 created_date: '2026-10-31T11:08:00Z'
-updated_date: '2026-10-31T11:17:00Z'
+updated_date: '2026-10-31T11:45:00Z'
 labels:
   - source-header
   - rollout
-dependencies: []
+dependencies:
+  - TASK-16
 documentation:
   - /Users/flynn_macpro/.claude/plans/giggly-kindling-snowglobe.md
 ---
