@@ -24,6 +24,7 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 MODULE_PATH = HERE / "source-header.py"
@@ -453,6 +454,15 @@ class GitCase(TempDirCase):
 
     def setUp(self) -> None:
         super().setUp()
+        # TASK-3#4 사용자 전역·시스템 git 설정(mailmap.file, hooksPath 등)이 결과를 바꾸지 않게
+        # 빈 전역 설정으로 격리한다. 하위 프로세스와 도구 내부의 git 호출이 모두 이 환경을 물려받는다.
+        empty = self.tmp.parent / f"{self.tmp.name}.gitconfig"
+        empty.write_text("", encoding="utf-8")
+        self.addCleanup(empty.unlink, missing_ok=True)
+        patcher = mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(empty),
+                                               "GIT_CONFIG_NOSYSTEM": "1"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.git("init", "-q", "-b", "main")
         self.git("config", "user.name", "tester")
         self.git("config", "user.email", "tester@example.com")
@@ -917,8 +927,6 @@ class TestHookPreCommit(GitCase):
 
     def test_fix_exit_code_is_passed_through(self) -> None:
         """TASK-2#1 TASK-2#B1 fix의 exit 코드를 그대로 돌려주고 lint는 부르지 않는다. 성공하면 lint 코드를 돌려준다"""
-        from unittest import mock
-
         self.opt_in()
         cwd = os.getcwd()
         os.chdir(self.tmp)
