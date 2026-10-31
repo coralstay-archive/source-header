@@ -1,10 +1,11 @@
-<!-- work-order-hash: 488215660acc7c2c5605af948e2b909b2a4b52b7929be6a35c585d3b0f7b94cc -->
+<!-- work-order-hash: 03d5a505cd6b36579020770d6d2f542f9f85bc041d81de850c54f218f39b5ad3 -->
 # 작업 순서
 
 `work_order.py`가 backlog/tasks의 의존(`dependencies`)으로 만든 파일이다 — 직접 고치지 말고 다시 생성한다. 같은 단계의 태스크는 병렬로, 단계는 위에서 아래로 순차로 진행한다. Done 태스크와 없는 태스크에 대한 의존은 충족된 것으로 본다.
 
 | 단계 | ID | 제목 |
 |---|---|---|
+| 1 | TASK-3 | source-header 6단계: ~/githubs 기존 파일 전체에 헤더 적용 (조사·순서·저장소별 절차) |
 | 1 | TASK-4 | source-header 적용: dev-tools/central-docs-collector |
 | 1 | TASK-5 | source-header 적용: dev-tools/omnivim |
 | 1 | TASK-6 | source-header 적용: dev-tools/source-header |
