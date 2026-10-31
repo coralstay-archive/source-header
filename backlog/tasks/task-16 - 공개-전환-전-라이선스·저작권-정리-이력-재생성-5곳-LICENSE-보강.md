@@ -4,7 +4,7 @@ title: '공개 전환 전 라이선스·저작권 정리: 이력 재생성 5곳 
 status: In Progress
 assignee: []
 created_date: '2026-10-31T11:41:00Z'
-updated_date: '2026-10-31T12:00:00Z'
+updated_date: '2026-10-31T12:06:00Z'
 labels:
   - license
   - public
@@ -74,3 +74,30 @@ filter-repo로 경로 목록을 맞추는 것보다, 로컬 파일은 유지한 
 3. 문제없는 3곳: LICENSE + .gitignore 커밋
 4. 전체 gitleaks·서드파티 경로 재검사 → Implementation Notes
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+## AC #1 백업 (2026-10-31)
+~/githubs-backup/2026-10-31/ 에 8개 저장소의 git bundle(--all) + .git tgz + GitHub 메타데이터(json, 5개)
+bundle verify: handcrafted-cpp(34 commits), coding-style(2), omnivim(23), handcrafted-java(5), databases(2), central-docs(3), ebpf(3), freeride(2) — 모두 "is okay"
+GitHub 5개 저장소: 이슈·PR·릴리스 0
+
+## AC #2~#6 로컬 이력 재생성 (완료) — GitHub 삭제·재생성·push는 유저 실행 대기
+pre_git_safety_check가 gh repo delete와 main push를 금지 → 우회하지 않고 유저 명령으로 넘김
+| 저장소 | 새 커밋 | 추적 파일 | 제외(.gitignore, 로컬 유지) |
+|---|---|---|---|
+| handcrafted-cpp | d7dccf3 | 54 | /practice/ 전체, *.pdf/eps/ps. README 허위 문구 정정, MIT→AGPL |
+| coding-style | e0d2f68 | 1,616 | docs/.ocr-cache, docs/*METADATA*, contents-overview-tocs.md, scripts/contents_data |
+| omnivim | c8348af | 597 | official_sources, scripts/data/all_tips.py, PRACTICAL_VIM_MAP.md, 공식 예제와 같은 tip119·120·121 실습. MIT→AGPL(README 배지·절, PROJECT_STRUCTURE) |
+| handcrafted-java | 291b8bc | 100 | jls-spec, Books, *.pdf |
+| databases | 5d30188 | 319 | scripts/content*_data, practice/16~18(기출) |
+로컬 원본(책 코드·OCR·데이터) 남아 있음 확인: handcrafted-cpp practice/, coding-style docs/.ocr-cache, omnivim official_sources, databases scripts/content01_data.
+참고: 공개본에서는 데이터가 빠져 일부 생성기(databases generate_all, omnivim generate_practice, coding-style 메타데이터 생성기)를 그대로 돌릴 수 없다(README에 명시).
+
+## AC #7 LICENSE 보강 (로컬 커밋 완료, push 대기)
+central-docs-collector 16355e6, ebpf-wire-to-code-tracer b6595cb(미커밋 변경 24건은 건드리지 않음), freeride 3365ed5(layout.yaml 변경은 건드리지 않음)
+
+## AC #8 재검사
+5곳 모두 gitleaks no leaks, 1MB 초과 blob 0, 서드파티 경로 0(패턴 일치는 global_data·organizing_data 디렉터리명과 generate_jongmanbook_full.py 스크립트명 오탐)
+<!-- SECTION:NOTES:END -->
