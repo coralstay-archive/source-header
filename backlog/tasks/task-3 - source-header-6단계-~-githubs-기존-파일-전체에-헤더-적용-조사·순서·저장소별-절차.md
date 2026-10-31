@@ -4,7 +4,7 @@ title: 'source-header 6단계: ~/githubs 기존 파일 전체에 헤더 적용 (
 status: In Progress
 assignee: []
 created_date: '2026-10-30T19:31:00Z'
-updated_date: '2026-10-31T11:42:00Z'
+updated_date: '2026-10-31T11:44:00Z'
 labels:
   - rollout
 dependencies: []
@@ -108,6 +108,8 @@ work-order는 task만 계산하므로 draft 순서는 이 표가 기준. 승격 
 
 ## AC #4 .mailmap
 554df0f: git_authors는 %aN(--use-mailmap), git_user는 git check-mailmap. 메인 재실행: 71 passed, ruff OK, lint 0.
+
+재오픈(2026-10-31): 전역 mailmap.file(~/.mailmap) 설정 후 test_without_mailmap_old_names_remain이 실패 → GitCase에서 GIT_CONFIG_GLOBAL을 빈 파일로, GIT_CONFIG_NOSYSTEM=1로 격리(a056327). 재실행: 71 passed, ruff OK, lint 0. Done 재전환은 require_test_first가 비코드 AC(#1~#3, DoD) 표식을 요구해 보류 — 유저 결정 대기.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
