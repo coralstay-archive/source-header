@@ -1,7 +1,7 @@
 ---
-id: DRAFT-1
+id: TASK-16
 title: '공개 전환 전 라이선스·저작권 정리: 이력 재생성 5곳 + LICENSE 보강'
-status: Draft
+status: To Do
 assignee: []
 created_date: '2026-10-31T11:41:00Z'
 updated_date: '2026-10-31T11:45:00Z'
@@ -9,6 +9,8 @@ labels:
   - license
   - public
 dependencies: []
+documentation:
+  - /Users/flynn_macpro/.claude/plans/giggly-kindling-snowglobe.md
 ---
 
 ## Description
