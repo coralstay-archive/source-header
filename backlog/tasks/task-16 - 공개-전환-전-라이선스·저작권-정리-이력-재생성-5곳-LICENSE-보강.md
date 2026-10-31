@@ -4,7 +4,7 @@ title: '공개 전환 전 라이선스·저작권 정리: 이력 재생성 5곳 
 status: In Progress
 assignee: []
 created_date: '2026-10-31T11:41:00Z'
-updated_date: '2026-10-31T12:06:00Z'
+updated_date: '2026-10-31T12:42:00Z'
 labels:
   - license
   - public
@@ -39,21 +39,21 @@ documentation:
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 재생성·변경 대상 저장소 전부를 git bundle로 ~/githubs-backup/2026-10-31/에 백업하고 git bundle verify가 통과한다
-- [ ] #2 handcrafted-cpp: 책 원본 트랙·googletest·데이터 파일을 .gitignore로 빼고(로컬 파일 유지) README 문구를 사실대로 고친 뒤 새 이력으로 다시 만들고, GitHub 저장소를 삭제 후 같은 이름(Private)으로 재생성해 push한다
-- [ ] #3 coding-style: OCR 캐시와 책 목차 파생 파일을 빼고 같은 방식으로 재생성한다
-- [ ] #4 omnivim: official_sources를 빼고 MIT→AGPL-3.0-only로 바꾼 뒤 같은 방식으로 재생성한다
-- [ ] #5 handcrafted-java: jls-spec을 빼고 .gitignore 모순을 고친 뒤 같은 방식으로 재생성한다
-- [ ] #6 databases: 책 기반 데이터(scripts/content*_data 등)를 빼고 같은 방식으로 재생성한다
-- [ ] #7 central-docs-collector, ebpf-wire-to-code-tracer, freeride 루트에 AGPL-3.0 LICENSE와 .gitignore 보강을 커밋한다(ebpf의 미커밋 변경은 건드리지 않음)
-- [ ] #8 재생성한 5곳의 새 이력(git rev-list --objects --all)에 서드파티 경로·PDF가 0이고 gitleaks가 no leaks(또는 확인된 오탐만)임을 기록한다
+- [x] #1 재생성·변경 대상 저장소 전부를 git bundle로 ~/githubs-backup/2026-10-31/에 백업하고 git bundle verify가 통과한다
+- [x] #2 handcrafted-cpp: 책 원본 트랙·googletest·데이터 파일을 .gitignore로 빼고(로컬 파일 유지) README 문구를 사실대로 고친 뒤 새 이력으로 다시 만들고, GitHub 저장소를 삭제 후 같은 이름(Private)으로 재생성해 push한다
+- [x] #3 coding-style: OCR 캐시와 책 목차 파생 파일을 빼고 같은 방식으로 재생성한다
+- [x] #4 omnivim: official_sources를 빼고 MIT→AGPL-3.0-only로 바꾼 뒤 같은 방식으로 재생성한다
+- [x] #5 handcrafted-java: jls-spec을 빼고 .gitignore 모순을 고친 뒤 같은 방식으로 재생성한다
+- [x] #6 databases: 책 기반 데이터(scripts/content*_data 등)를 빼고 같은 방식으로 재생성한다
+- [x] #7 central-docs-collector, ebpf-wire-to-code-tracer, freeride 루트에 AGPL-3.0 LICENSE와 .gitignore 보강을 커밋한다(ebpf의 미커밋 변경은 건드리지 않음)
+- [x] #8 재생성한 5곳의 새 이력(git rev-list --objects --all)에 서드파티 경로·PDF가 0이고 gitleaks가 no leaks(또는 확인된 오탐만)임을 기록한다
 <!-- AC:END -->
 
 ## Definition of Done
 <!-- DOD:BEGIN -->
-- [ ] #1 모든 백업 bundle verify 통과 로그를 Implementation Notes에 첨부
-- [ ] #2 재생성 저장소마다 gh repo view로 Private·새 커밋 수를 확인
-- [ ] #3 로컬의 무시된 원본 파일(책 코드 등)이 삭제되지 않고 남아 있음을 확인
+- [x] #1 모든 백업 bundle verify 통과 로그를 Implementation Notes에 첨부
+- [x] #2 재생성 저장소마다 gh repo view로 Private·새 커밋 수를 확인
+- [x] #3 로컬의 무시된 원본 파일(책 코드 등)이 삭제되지 않고 남아 있음을 확인
 <!-- DOD:END -->
 
 ## Implementation Plan
@@ -100,4 +100,13 @@ central-docs-collector 16355e6, ebpf-wire-to-code-tracer b6595cb(미커밋 변�
 
 ## AC #8 재검사
 5곳 모두 gitleaks no leaks, 1MB 초과 blob 0, 서드파티 경로 0(패턴 일치는 global_data·organizing_data 디렉터리명과 generate_jongmanbook_full.py 스크립트명 오탐)
+
+## GitHub (유저 실행, 2026-10-31)
+github-recreate.sh 실행: 5개 저장소 삭제 → 같은 이름 Private 재생성 → push. 메인 확인: handcrafted-cpp·coding-style·omnivim·handcrafted-java·databases 모두 PRIVATE, 원격 커밋 1개, 토픽 복원. central-docs-collector·ebpf·freeride main push, 원격 LICENSE 존재 확인.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+공개 전환 전 라이선스·저작권 정리를 마쳤다. 8개 저장소를 bundle·tgz로 백업하고, 제3자 저작물이 이력에 있던 5곳(handcrafted-cpp, coding-style, omnivim, handcrafted-java, databases)은 해당 자료를 .gitignore로 빼서(로컬 유지) 이력을 새로 만들고 GitHub 저장소를 같은 이름 Private으로 재생성했다(삭제·push는 훅 때문에 유저가 실행). omnivim·handcrafted-cpp는 MIT→AGPL-3.0-only, 나머지는 AGPL LICENSE 추가. 새 이력은 gitleaks no leaks, 서드파티 경로·대용량 blob 0. 공개 전환 자체와 backlog 저장소(devOps, dev-toolchain, toy-project, factory, git-commit-tool)의 라이선스 조치는 각 저장소 카드에서 이어간다.
+<!-- SECTION:FINAL_SUMMARY:END -->
